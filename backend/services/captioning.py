@@ -11,11 +11,12 @@ def generate_ass_subtitles(
     words: list[dict],
     clip_start: float,
     clip_end: float,
-    output_path: str
+    output_path: str,
+    segments: list[dict] = None
 ):
     """
     Generates TikTok-style ASS subtitle file for a clip.
-    Words are filtered to the clip's time range and timestamps are offset.
+    Uses word-level timestamps if available, falls back to segment-level.
     """
     ass_header = """[Script Info]
 ScriptType: v4.00+
@@ -32,22 +33,34 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
     lines = []
+
+    # Try word-level first
     clip_words = [w for w in words if w["start"] >= clip_start and w["end"] <= clip_end]
 
-    # Group into lines of 4 words max
-    chunk_size = 4
-    for i in range(0, len(clip_words), chunk_size):
-        chunk = clip_words[i:i + chunk_size]
-        if not chunk:
-            continue
+    if clip_words:
+        # Word-level subtitles — group into lines of 4 words
+        chunk_size = 4
+        for i in range(0, len(clip_words), chunk_size):
+            chunk = clip_words[i:i + chunk_size]
+            if not chunk:
+                continue
+            start_ts = seconds_to_ass_time(chunk[0]["start"] - clip_start)
+            end_ts = seconds_to_ass_time(chunk[-1]["end"] - clip_start)
+            text = " ".join(w["word"].upper() for w in chunk)
+            lines.append(f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{text}")
 
-        start_ts = seconds_to_ass_time(chunk[0]["start"] - clip_start)
-        end_ts = seconds_to_ass_time(chunk[-1]["end"] - clip_start)
-        text = " ".join(w["word"].upper() for w in chunk)
-
-        lines.append(
-            f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{text}"
-        )
+    elif segments:
+        # Fallback — segment-level subtitles
+        clip_segments = [
+            s for s in segments
+            if s["start"] >= clip_start and s["end"] <= clip_end
+        ]
+        for seg in clip_segments:
+            start_ts = seconds_to_ass_time(seg["start"] - clip_start)
+            end_ts = seconds_to_ass_time(seg["end"] - clip_start)
+            # Break long text into chunks of ~40 chars
+            text = seg["text"].upper().strip()
+            lines.append(f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{text}")
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(ass_header)

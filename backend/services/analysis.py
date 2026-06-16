@@ -1,6 +1,6 @@
-import httpx
 import json
 import re
+from google import genai
 from config import settings
 
 
@@ -27,8 +27,8 @@ Return ONLY a valid JSON array. No explanation. No markdown. No extra text.
 
 [
   {{
-    "start": "HH:MM:SS",
-    "end": "HH:MM:SS",
+    "start": "MM:SS",
+    "end": "MM:SS",
     "hook": "Rewritten opening line optimized for retention",
     "category": "emotional_story | controversy | educational | funny | curiosity_gap",
     "score": 0,
@@ -58,14 +58,22 @@ def format_campaign_rules(campaign: dict | None) -> str:
 
 def timestamp_to_seconds(ts: str) -> float:
     parts = ts.split(":")
-    h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
-    return h * 3600 + m * 60 + s
+    if len(parts) == 2:
+        m, s = int(parts[0]), float(parts[1])
+        return m * 60 + s
+    elif len(parts) == 3:
+        h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+        return h * 3600 + m * 60 + s
+    else:
+        return float(ts)
 
 
 def analyze(segments: list[dict], campaign: dict | None) -> list[dict]:
     """
-    Sends transcript to Ollama LLM and returns list of viral moments.
+    Sends full transcript to Gemini Flash and returns top 5 viral moments.
+    Handles any video length thanks to Gemini's large context window.
     """
+    # Build full transcript — no truncation needed with Gemini
     transcript_text = "\n".join(
         f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}" for s in segments
     )
@@ -82,26 +90,26 @@ def analyze(segments: list[dict], campaign: dict | None) -> list[dict]:
         forbidden_topics=forbidden
     )
 
-    response = httpx.post(
-        f"{settings.ollama_base_url}/api/generate",
-        json={
-            "model": settings.ollama_model,
-            "prompt": prompt,
-            "stream": False
-        },
-        timeout=120.0
+    # Call Gemini Flash
+    client = genai.Client(api_key=settings.gemini_api_key)
+    response = client.models.generate_content(
+        model="gemini-3.5-flash",
+        contents=prompt
     )
-    response.raise_for_status()
-    raw = response.json().get("response", "")
+
+    raw = response.text or ""
+    print(f"[DEBUG] Gemini response: {raw[:300]}")
 
     # Defensive JSON extraction
     try:
-        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        # Strip markdown code blocks if present
+        clean = re.sub(r'```json|```', '', raw).strip()
+        match = re.search(r'\[.*\]', clean, re.DOTALL)
         if not match:
-            raise ValueError("No JSON array found in LLM response")
+            raise ValueError("No JSON array found in Gemini response")
         moments = json.loads(match.group())
     except Exception as e:
-        raise ValueError(f"Failed to parse LLM response: {e}\nRaw: {raw}")
+        raise ValueError(f"Failed to parse Gemini response: {e}\nRaw: {raw}")
 
     # Convert timestamps to seconds
     for m in moments:

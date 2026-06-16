@@ -39,11 +39,21 @@ async def create_job(
     }
 
     if file:
+        import os
+        from config import settings
+        tmp_dir = f"{settings.tmp_dir}/{job_id}"
+        os.makedirs(tmp_dir, exist_ok=True)
+        local_path = f"{tmp_dir}/input.mp4"
+
         file_bytes = await file.read()
-        storage_path = f"videos/originals/{job_id}.mp4"
-        supabase.storage.from_("clipos-assets").upload(storage_path, file_bytes)
-        job_data["storage_path"] = storage_path
+        with open(local_path, "wb") as f_out:
+            f_out.write(file_bytes)
+
+        job_data["storage_path"] = local_path
         job_data["original_filename"] = file.filename
+
+    elif source_type == "local_path" and source_url:
+        job_data["storage_path"] = source_url
 
     supabase.table("jobs").insert(job_data).execute()
 

@@ -1,3 +1,4 @@
+import os
 import yt_dlp
 from pathlib import Path
 from config import settings
@@ -19,21 +20,27 @@ def ingest(job: dict, job_id: str) -> str:
             "outtmpl": output_path,
             "quiet": True,
             "no_warnings": True,
+            "ffmpeg_location": r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin",  # ← add this line with your actual path
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([job["source_url"]])
 
         # Upload original to Supabase
-        storage_path = f"videos/originals/{job_id}.mp4"
-        with open(output_path, "rb") as f:
-            supabase.storage.from_("clipos-assets").upload(storage_path, f)
-        supabase.table("jobs").update({"storage_path": storage_path}).eq("id", job_id).execute()
+        supabase.table("jobs").update({"storage_path": output_path}).eq("id", job_id).execute()
 
     elif job["source_type"] == "file_upload":
-        # Download from Supabase Storage to tmp
-        storage_path = job["storage_path"]
-        file_bytes = supabase.storage.from_("clipos-assets").download(storage_path)
-        with open(output_path, "wb") as f:
-            f.write(file_bytes)
+        # File already saved locally during upload
+        local_path = job["storage_path"]
+        if local_path != output_path:
+            import shutil
+            shutil.copy2(local_path, output_path)
+
+    elif job["source_type"] == "local_path":
+        local_path = job["source_url"] or job["storage_path"]
+        # Strip surrounding quotes if present
+        local_path = local_path.strip().strip('"').strip("'")
+        if not os.path.exists(local_path):
+            raise FileNotFoundError(f"Local file not found: {local_path}")
+        return local_path
 
     return output_path

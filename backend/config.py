@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
     whisper_model: str = "medium"
     tmp_dir: str = "C:/tmp/clipos"
+    gemini_api_key: str = ""
+    groq_api_key: str = ""
 
     class Config:
         env_file = ".env"

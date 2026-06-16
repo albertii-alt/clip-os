@@ -16,7 +16,7 @@ def get_face_crop_x(video_path: str, width: int, height: int) -> int:
     return max(0, (width - target_width) // 2)
 
 
-def render_clips(video_path: str, moments: list[dict], job_id: str):
+def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: dict | None = None):
     """
     For each moment: cut → reframe to 9:16 → burn captions → upload to Supabase.
     """
@@ -38,6 +38,27 @@ def render_clips(video_path: str, moments: list[dict], job_id: str):
     # Load transcript for captions
     with open(str(tmp_dir / "transcript.json")) as f:
         transcript = json.load(f)
+
+    # Enforce campaign clip length constraints
+    min_length = 15  # default
+    max_length = 120  # default
+    if campaign:
+        min_length = campaign.get("min_clip_length", 15)
+        max_length = campaign.get("max_clip_length", 120)
+
+    original_moments = moments
+    filtered_moments = []
+    for m in moments:
+        dur = m["end_seconds"] - m["start_seconds"]
+        if min_length <= dur <= max_length:
+            filtered_moments.append(m)
+        else:
+            print(f"[INFO] Skipping moment {m.get('start')} - {m.get('end')}: duration {dur:.1f}s outside {min_length}s-{max_length}s")
+
+    moments = filtered_moments
+    if not moments:
+        print("[WARN] All moments filtered out by campaign length constraints — using original unfiltered moments")
+        moments = original_moments
 
     for idx, moment in enumerate(moments, start=1):
         start = moment["start_seconds"]

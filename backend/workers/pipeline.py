@@ -38,7 +38,7 @@ def run_pipeline(self, job_id: str):
 
         # Step 4: Render clips
         update_job_status(job_id, "rendering")
-        video_processing.render_clips(video_path, moments, job_id)
+        video_processing.render_clips(video_path, moments, job_id, campaign=campaign)
 
         # Done
         update_job_status(job_id, "done")

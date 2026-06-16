@@ -108,9 +108,10 @@ def _transcribe_file(client: Groq, audio_path: str, time_offset: float) -> list[
     with open(audio_path, "rb") as f:
         response = client.audio.transcriptions.create(
             file=(Path(audio_path).name, f),
-            model="whisper-large-v3",
+            model="whisper-large-v3-turbo",
             response_format="verbose_json",
-            timestamp_granularities=["word", "segment"]
+            timestamp_granularities=["word", "segment"],
+            language="en"
         )
 
     segments = []

@@ -12,6 +12,10 @@ Analyze the following transcript and find the TOP 5 most clip-worthy moments.
 ## Campaign Rules
 {campaign_rules}
 
+## CREATOR STYLE DIRECTIVE (HIGH PRIORITY — follow this strictly)
+{style_notes}
+This directive overrides general selection criteria. Only select moments that match this style.
+
 ## Transcript
 {transcript_text}
 
@@ -51,8 +55,7 @@ def format_campaign_rules(campaign: dict | None) -> str:
         f"Required hashtags: {', '.join(campaign.get('required_hashtags', []))}\n"
         f"Required tags: {', '.join(campaign.get('required_tags', []))}\n"
         f"Clip length: {campaign.get('min_clip_length', 30)}s to {campaign.get('max_clip_length', 60)}s\n"
-        f"Forbidden topics: {', '.join(campaign.get('forbidden_topics', []))}\n"
-        f"Style notes: {campaign.get('style_notes', 'none')}"
+        f"Forbidden topics: {', '.join(campaign.get('forbidden_topics', []))}"
     )
 
 
@@ -81,9 +84,11 @@ def analyze(segments: list[dict], campaign: dict | None) -> list[dict]:
     min_length = campaign.get("min_clip_length", 30) if campaign else 30
     max_length = campaign.get("max_clip_length", 60) if campaign else 60
     forbidden = ", ".join(campaign.get("forbidden_topics", [])) if campaign else "none"
+    style_notes = campaign.get("style_notes", "No specific style directive.") if campaign else "No specific style directive."
 
     prompt = ANALYSIS_PROMPT.format(
         campaign_rules=format_campaign_rules(campaign),
+        style_notes=style_notes,
         transcript_text=transcript_text,
         min_length=min_length,
         max_length=max_length,

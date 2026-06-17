@@ -12,24 +12,25 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    async function load() {
-      try {
-        const jobsData = await getJobs();
-        setJobs(jobsData);
-        const doneJobs = jobsData.filter((j) => j.status === 'done');
-        const results = await Promise.allSettled(doneJobs.map((j) => getClips(j.id)));
-        const clips = results
-          .filter((r): r is PromiseFulfilledResult<Clip[]> => r.status === 'fulfilled')
-          .flatMap((r) => r.value);
-        setAllClips(clips);
-      } catch (e) {
-        setError('Could not reach the backend. Is it running?');
-      } finally {
-        setLoading(false);
-      }
-    }
     load();
   }, []);
+
+  async function load() {
+    try {
+      const jobsData = await getJobs();
+      setJobs(jobsData);
+      const doneJobs = jobsData.filter((j) => j.status === 'done');
+      const results = await Promise.allSettled(doneJobs.map((j) => getClips(j.id)));
+      const clips = results
+        .filter((r): r is PromiseFulfilledResult<Clip[]> => r.status === 'fulfilled')
+        .flatMap((r) => r.value);
+      setAllClips(clips);
+    } catch (e) {
+      setError('Could not reach the backend. Is it running?');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const totalEarnings = allClips.reduce((sum, c) => sum + (c.earnings || 0), 0);
   const totalViews = allClips.reduce((sum, c) => sum + (c.views || 0), 0);
@@ -55,7 +56,7 @@ export default function DashboardPage() {
         {loading ? (
           <p style={{ color: 'var(--muted)' }}>Loading...</p>
         ) : (
-          <JobList jobs={jobs} />
+          <JobList jobs={jobs} onRefresh={load} />
         )}
       </div>
     </div>

@@ -22,7 +22,9 @@ export interface Job {
   source_url?: string;
   original_filename?: string;
   storage_path?: string;
-  status: 'queued' | 'downloading' | 'transcribing' | 'analyzing' | 'rendering' | 'done' | 'failed';
+  status: 'queued' | 'downloading' | 'transcribing' | 'analyzing' | 'rendering' | 'done' | 'failed' | 'cancelled';
+  cancelled?: boolean;
+  celery_task_id?: string;
   error_message?: string;
   transcript_path?: string;
   created_at: string;
@@ -143,5 +145,26 @@ export async function updateClip(
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to update clip');
+  return res.json();
+}
+
+export async function cancelJob(jobId: string): Promise<{ status: string }> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/cancel`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to cancel job');
+  return res.json();
+}
+
+export async function retryJob(jobId: string): Promise<{ status: string; job_id: string }> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/retry`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to retry job' }));
+    throw new Error(err.detail || 'Failed to retry job');
+  }
+  return res.json();
+}
+
+export async function deleteJob(jobId: string): Promise<{ status: string }> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete job');
   return res.json();
 }

@@ -14,6 +14,11 @@ def ingest(job: dict, job_id: str) -> str:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     output_path = str(tmp_dir / "input.mp4")
 
+    # Idempotency check — reuse existing download
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        print("[INFO] Reusing existing downloaded video, skipping re-download")
+        return output_path
+
     if job["source_type"] == "youtube_url":
         ydl_opts = {
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",

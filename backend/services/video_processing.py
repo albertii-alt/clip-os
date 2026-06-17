@@ -102,16 +102,19 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
             .output(
                 final_clip_path,
                 vf=f"crop={target_w}:{target_h}:{crop_x}:0,scale=1080:1920,subtitles='{ass_path_escaped}'",
-                vcodec="libx264",
+                vcodec="h264_nvenc",
                 acodec="aac",
-                crf=23,
-                preset="fast"
+                **{"rc:v": "vbr", "cq:v": "26", "preset": "p4", "maxrate:v": "2500k", "bufsize:v": "5000k"}
             )
             .overwrite_output()
             .run(quiet=False, cmd=r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe")
         )
 
         # Step 4: Upload to Supabase
+        import os
+        file_size_mb = os.path.getsize(final_clip_path) / (1024 * 1024)
+        print(f"[DEBUG] Clip {idx} size: {file_size_mb:.2f} MB")
+
         storage_path = f"clips/{job_id}/clip_{idx}.mp4"
         with open(final_clip_path, "rb") as f:
             supabase.storage.from_("clipos-assets").upload(storage_path, f)
@@ -132,7 +135,3 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
             "storage_path": storage_path,
             "public_url": public_url
         }).execute()
-
-    # Cleanup tmp files
-    import shutil
-    shutil.rmtree(str(tmp_dir), ignore_errors=True)

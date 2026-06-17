@@ -1,4 +1,5 @@
 import json
+import os
 import ffmpeg
 import math
 from pathlib import Path
@@ -22,9 +23,26 @@ def transcribe(video_path: str, job_id: str) -> list[dict]:
     Handles long videos by chunking audio into 10-minute segments.
     """
     tmp_dir = Path(settings.tmp_dir) / job_id
-    audio_path = str(tmp_dir / "audio.wav")
+    transcript_path_local = str(tmp_dir / "transcript.json")
     ffmpeg_bin = r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
     ffprobe_bin = r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe"
+
+    # Idempotency check — reuse existing transcript
+    if os.path.exists(transcript_path_local):
+        print("[INFO] Reusing existing transcript, skipping re-transcription")
+        with open(transcript_path_local) as f:
+            transcript_data = json.load(f)
+        job_row = supabase.table("jobs").select("transcript_path").eq("id", job_id).single().execute()
+        if not job_row.data or not job_row.data.get("transcript_path"):
+            storage_path = f"transcripts/{job_id}.json"
+            with open(transcript_path_local, "rb") as f:
+                supabase.storage.from_("clipos-assets").upload(
+                    storage_path, f, file_options={"upsert": "true"}
+                )
+            supabase.table("jobs").update({"transcript_path": storage_path}).eq("id", job_id).execute()
+        return transcript_data["segments"]
+
+    audio_path = str(tmp_dir / "audio.wav")
 
     # Extract audio
     (

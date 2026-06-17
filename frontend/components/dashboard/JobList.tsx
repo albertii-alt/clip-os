@@ -1,7 +1,12 @@
 import { Job } from '@/lib/api';
 import JobCard from './JobCard';
 
-export default function JobList({ jobs }: { jobs: Job[] }) {
+interface JobListProps {
+  jobs: Job[];
+  onRefresh: () => void;
+}
+
+export default function JobList({ jobs, onRefresh }: JobListProps) {
   if (jobs.length === 0) {
     return (
       <div
@@ -16,7 +21,7 @@ export default function JobList({ jobs }: { jobs: Job[] }) {
   return (
     <div className="space-y-3">
       {jobs.map((job) => (
-        <JobCard key={job.id} job={job} />
+        <JobCard key={job.id} job={job} onRefresh={onRefresh} />
       ))}
     </div>
   );

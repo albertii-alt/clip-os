@@ -35,7 +35,7 @@ Return ONLY a valid JSON array. No explanation. No markdown. No extra text.
     "end": "MM:SS",
     "hook": "Rewritten opening line optimized for retention",
     "category": "emotional_story | controversy | educational | funny | curiosity_gap",
-    "score": 0,
+    "score": 85,
     "reason": "One sentence explaining why this moment works"
   }}
 ]
@@ -43,6 +43,7 @@ Return ONLY a valid JSON array. No explanation. No markdown. No extra text.
 Rules:
 - Each clip must be between {min_length}s and {max_length}s
 - Avoid topics: {forbidden_topics}
+- score must be an integer between 0 and 100
 - Return exactly 5 moments, sorted by score descending
 """
 

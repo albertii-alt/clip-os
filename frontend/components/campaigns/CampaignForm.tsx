@@ -8,6 +8,15 @@ interface CampaignFormProps {
   initial?: Partial<Campaign>;
 }
 
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-xs" style={{ color: 'var(--muted)' }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
 export default function CampaignForm({ onSubmit, initial }: CampaignFormProps) {
   const [name, setName] = useState(initial?.name || '');
   const [handle, setHandle] = useState(initial?.creator_handle || '');
@@ -40,13 +49,6 @@ export default function CampaignForm({ onSubmit, initial }: CampaignFormProps) {
     border: '1px solid var(--border)',
     color: 'var(--text)',
   };
-
-  const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div className="space-y-1">
-      <label className="text-xs" style={{ color: 'var(--muted)' }}>{label}</label>
-      {children}
-    </div>
-  );
 
   return (
     <div

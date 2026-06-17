@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { Clip, updateClip } from '@/lib/api';
 
 export default function ClipCard({ clip }: { clip: Clip }) {
-  const [views, setViews] = useState(clip.views || 0);
-  const [earnings, setEarnings] = useState(clip.earnings || 0);
+  const [views, setViews] = useState(clip.views > 0 ? String(clip.views) : '');
+  const [earnings, setEarnings] = useState(clip.earnings > 0 ? String(clip.earnings) : '');
   const [saving, setSaving] = useState(false);
 
   const duration = (clip.end_time - clip.start_time).toFixed(0);
@@ -13,7 +13,10 @@ export default function ClipCard({ clip }: { clip: Clip }) {
   async function handleSave() {
     setSaving(true);
     try {
-      await updateClip(clip.id, { views, earnings });
+      await updateClip(clip.id, {
+        views: views === '' ? 0 : Number(views),
+        earnings: earnings === '' ? 0 : Number(earnings),
+      });
     } finally {
       setSaving(false);
     }
@@ -73,17 +76,19 @@ export default function ClipCard({ clip }: { clip: Clip }) {
         <p className="text-xs font-medium" style={{ color: 'var(--muted)' }}>Track Performance</p>
         <div className="flex gap-2">
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
             value={views}
-            onChange={(e) => setViews(Number(e.target.value))}
+            onChange={(e) => setViews(e.target.value.replace(/[^0-9]/g, ''))}
             placeholder="Views"
             className="flex-1 px-2 py-1 rounded text-xs outline-none"
             style={{ background: '#1a1a1a', border: '1px solid var(--border)', color: 'var(--text)' }}
           />
           <input
-            type="number"
+            type="text"
+            inputMode="decimal"
             value={earnings}
-            onChange={(e) => setEarnings(Number(e.target.value))}
+            onChange={(e) => setEarnings(e.target.value.replace(/[^0-9.]/g, ''))}
             placeholder="Earnings $"
             className="flex-1 px-2 py-1 rounded text-xs outline-none"
             style={{ background: '#1a1a1a', border: '1px solid var(--border)', color: 'var(--text)' }}

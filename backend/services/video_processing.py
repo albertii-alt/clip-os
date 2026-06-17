@@ -1,19 +1,16 @@
 import json
+import time
 import uuid
 import ffmpeg
 from pathlib import Path
 from config import settings
 from database import supabase
 from services.captioning import generate_ass_subtitles
-
-
-def get_face_crop_x(video_path: str, width: int, height: int) -> int:
-    """
-    Basic center crop. MediaPipe face detection can replace this later.
-    Returns x offset for 9:16 crop from 16:9 source.
-    """
-    target_width = int(height * 9 / 16)
-    return max(0, (width - target_width) // 2)
+from services.face_tracking import (
+    detect_face_positions,
+    fill_gaps_and_smooth,
+    build_dynamic_crop_filter,
+)
 
 
 def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: dict | None = None):
@@ -91,17 +88,37 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
         # Step 3: Reframe 16:9 → 9:16 + burn captions
         target_h = orig_height
         target_w = int(orig_height * 9 / 16)
-        crop_x = get_face_crop_x(video_path, orig_width, orig_height)
+        clip_duration = end - start
+
+        # Dynamic face tracking
+        _ft_start = time.perf_counter()
+        try:
+            raw_positions = detect_face_positions(raw_clip_path, 0.0, clip_duration)
+            smoothed      = fill_gaps_and_smooth(raw_positions)
+            if not smoothed:
+                raise ValueError("no usable positions")
+            crop_filter = build_dynamic_crop_filter(
+                smoothed, orig_width, orig_height, target_w, target_h, clip_duration
+            )
+        except Exception as e:
+            print(f"[WARN] Face tracking failed for clip {idx} ({e}) — falling back to static center-crop")
+            static_x    = max(0, (orig_width - target_w) // 2)
+            crop_filter = f"crop={target_w}:{target_h}:{static_x}:0"
+        _ft_ms = (time.perf_counter() - _ft_start) * 1000
+        print(f"[INFO] Face tracking took {_ft_ms:.1f}ms for clip {idx}")
 
         # Escape path for FFmpeg subtitle filter on Windows
         ass_path_escaped = ass_path.replace("\\", "/").replace(":", "\\:")
+
+        full_vf = f"{crop_filter},scale=1080:1920,subtitles='{ass_path_escaped}'"
+        print(f"[DEBUG] vf filter for clip {idx}: {full_vf[:120]}{'...' if len(full_vf) > 120 else ''}")
 
         (
             ffmpeg
             .input(raw_clip_path)
             .output(
                 final_clip_path,
-                vf=f"crop={target_w}:{target_h}:{crop_x}:0,scale=1080:1920,subtitles='{ass_path_escaped}'",
+                vf=full_vf,
                 vcodec="h264_nvenc",
                 acodec="aac",
                 **{"rc:v": "vbr", "cq:v": "26", "preset": "p4", "maxrate:v": "2500k", "bufsize:v": "5000k"}

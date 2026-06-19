@@ -15,8 +15,6 @@ class CampaignCreate(BaseModel):
     required_tags: List[str] = []
     forbidden_topics: List[str] = []
     style_notes: Optional[str] = None
-    layout_style: str = 'full_bleed'
-    boxed_background_color: str = 'black'
 
 
 class CampaignUpdate(CampaignCreate):

@@ -12,8 +12,6 @@ export interface Campaign {
   required_tags: string[];
   forbidden_topics: string[];
   style_notes?: string;
-  layout_style: 'full_bleed' | 'boxed';
-  boxed_background_color: 'black' | 'white';
   created_at: string;
 }
 
@@ -29,6 +27,8 @@ export interface Job {
   celery_task_id?: string;
   error_message?: string;
   transcript_path?: string;
+  layout_style: 'full_bleed' | 'boxed';
+  boxed_background_color: 'black' | 'white';
   created_at: string;
   updated_at: string;
 }
@@ -107,12 +107,16 @@ export async function getJob(jobId: string): Promise<Job> {
 
 export async function createJobFromUrl(
   sourceUrl: string,
-  campaignId?: string
+  campaignId?: string,
+  layoutStyle: string = 'full_bleed',
+  bgColor: string = 'black',
 ): Promise<{ job_id: string; status: string }> {
   const formData = new FormData();
   formData.append('source_type', 'youtube_url');
   formData.append('source_url', sourceUrl);
   if (campaignId) formData.append('campaign_id', campaignId);
+  formData.append('layout_style', layoutStyle);
+  formData.append('boxed_background_color', bgColor);
   const res = await fetch(`${API_URL}/jobs/`, { method: 'POST', body: formData });
   if (!res.ok) throw new Error('Failed to create job');
   return res.json();
@@ -133,12 +137,16 @@ export async function createJobFromFile(
 
 export async function createJobFromLocalPath(
   localPath: string,
-  campaignId?: string
+  campaignId?: string,
+  layoutStyle: string = 'full_bleed',
+  bgColor: string = 'black',
 ): Promise<{ job_id: string; status: string }> {
   const formData = new FormData();
   formData.append('source_type', 'local_path');
   formData.append('source_url', localPath);
   if (campaignId) formData.append('campaign_id', campaignId);
+  formData.append('layout_style', layoutStyle);
+  formData.append('boxed_background_color', bgColor);
   const res = await fetch(`${API_URL}/jobs/`, { method: 'POST', body: formData });
   if (!res.ok) throw new Error('Failed to create job');
   return res.json();

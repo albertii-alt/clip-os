@@ -13,6 +13,8 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
   const [localPath, setLocalPath] = useState('');
   const [campaignId, setCampaignId] = useState('');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [layoutStyle, setLayoutStyle] = useState<'full_bleed' | 'boxed'>('full_bleed');
+  const [bgColor, setBgColor] = useState<'black' | 'white'>('black');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -27,10 +29,10 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
       let result;
       if (mode === 'url') {
         if (!url) throw new Error('Please enter a YouTube URL');
-        result = await createJobFromUrl(url, campaignId || undefined);
+        result = await createJobFromUrl(url, campaignId || undefined, layoutStyle, bgColor);
       } else {
         if (!localPath) throw new Error('Please enter a local file path');
-        result = await createJobFromLocalPath(localPath, campaignId || undefined);
+        result = await createJobFromLocalPath(localPath, campaignId || undefined, layoutStyle, bgColor);
       }
       onJobCreated(result.job_id);
     } catch (e: unknown) {
@@ -112,6 +114,50 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
           ))}
         </select>
       </div>
+
+      <div className="space-y-2">
+        <label className="text-sm" style={{ color: 'var(--muted)' }}>Clip Layout</label>
+        <div className="flex gap-2">
+          {(['full_bleed', 'boxed'] as const).map((ls) => (
+            <button
+              key={ls}
+              type="button"
+              onClick={() => setLayoutStyle(ls)}
+              className="px-4 py-2 rounded-md text-sm font-medium transition-colors"
+              style={{
+                background: layoutStyle === ls ? 'var(--accent)' : 'transparent',
+                color: layoutStyle === ls ? '#000' : 'var(--muted)',
+                border: `1px solid ${layoutStyle === ls ? 'var(--accent)' : 'var(--border)'}`,
+              }}
+            >
+              {ls === 'full_bleed' ? 'Full-bleed' : 'Boxed'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {layoutStyle === 'boxed' && (
+        <div className="space-y-2">
+          <label className="text-sm" style={{ color: 'var(--muted)' }}>Background Color</label>
+          <div className="flex gap-2">
+            {(['black', 'white'] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setBgColor(c)}
+                className="px-4 py-2 rounded-md text-sm font-medium transition-colors capitalize"
+                style={{
+                  background: bgColor === c ? 'var(--accent)' : 'transparent',
+                  color: bgColor === c ? '#000' : 'var(--muted)',
+                  border: `1px solid ${bgColor === c ? 'var(--accent)' : 'var(--border)'}`,
+                }}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && <p className="text-sm" style={{ color: '#ef4444' }}>{error}</p>}
 

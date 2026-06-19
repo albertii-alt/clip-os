@@ -155,7 +155,7 @@ def render_boxed_clip(
     )
 
 
-def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: dict | None = None):
+def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: dict | None = None, layout_style: str = 'full_bleed', bg_color: str = 'black'):
     """
     For each moment: cut → reframe to 9:16 → burn captions → upload to Supabase.
     """
@@ -198,13 +198,6 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
     if not moments:
         print("[WARN] All moments filtered out by campaign length constraints — using original unfiltered moments")
         moments = original_moments
-
-    # Read layout settings from campaign
-    layout_style = 'full_bleed'
-    bg_color     = 'black'
-    if campaign:
-        layout_style = campaign.get('layout_style', 'full_bleed')
-        bg_color     = campaign.get('boxed_background_color', 'black')
 
     for idx, moment in enumerate(moments, start=1):
         start    = moment["start_seconds"]

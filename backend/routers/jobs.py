@@ -30,6 +30,8 @@ async def create_job(
     source_type: str = Form(...),
     source_url: Optional[str] = Form(None),
     campaign_id: Optional[str] = Form(None),
+    layout_style: str = Form('full_bleed'),
+    boxed_background_color: str = Form('black'),
     file: Optional[UploadFile] = File(None)
 ):
     job_id = str(uuid.uuid4())
@@ -39,6 +41,8 @@ async def create_job(
         "source_type": source_type,
         "source_url": source_url,
         "campaign_id": campaign_id,
+        "layout_style": layout_style,
+        "boxed_background_color": boxed_background_color,
         "status": "queued"
     }
 

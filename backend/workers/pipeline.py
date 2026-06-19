@@ -89,7 +89,12 @@ def run_pipeline(self, job_id: str):
             print("[INFO] Clips already rendered for this job, skipping re-render")
         else:
             update_job_status(job_id, "rendering")
-            video_processing.render_clips(video_path, moments, job_id, campaign=campaign)
+            video_processing.render_clips(
+                video_path, moments, job_id,
+                campaign=campaign,
+                layout_style=job.get("layout_style", "full_bleed"),
+                bg_color=job.get("boxed_background_color", "black"),
+            )
 
         # Terminal: success
         update_job_status(job_id, "done")

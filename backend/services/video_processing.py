@@ -17,6 +17,10 @@ from services.face_tracking import (
 FFMPEG_BIN  = r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
 FFPROBE_BIN = r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe"
 
+# Suppress FFmpeg Fontconfig error spam on Windows
+os.environ.setdefault("FC_CONFIG_FILE", "")
+os.environ.setdefault("FONTCONFIG_FILE", "")
+
 
 def _get_crop_filter(
     raw_clip_path: str,
@@ -237,8 +241,8 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
                 bg_color=bg_color,
             )
         else:
-            # Step 2: Generate ASS captions (full_bleed path — unchanged)
-            ass_path        = str(clips_dir / f"clip_{idx}.ass")
+            # Step 2: Generate ASS captions (full_bleed path)
+            ass_path         = str(clips_dir / f"clip_{idx}.ass")
             ass_path_escaped = ass_path.replace("\\", "/").replace(":", "\\:")
             generate_ass_subtitles(
                 transcript["words"],

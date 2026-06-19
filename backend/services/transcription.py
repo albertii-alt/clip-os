@@ -132,45 +132,57 @@ def _transcribe_file(client: Groq, audio_path: str, time_offset: float) -> list[
             language="en"
         )
 
+    # Groq returns word timestamps as a flat top-level array, not nested in segments
+    raw_words = []
+    if hasattr(response, 'words') and response.words:
+        for w in response.words:
+            if isinstance(w, dict):
+                raw_words.append({
+                    "word":  w.get("word", "").strip(),
+                    "start": round(w.get("start", 0) + time_offset, 3),
+                    "end":   round(w.get("end",   0) + time_offset, 3),
+                })
+            else:
+                raw_words.append({
+                    "word":  w.word.strip(),
+                    "start": round(w.start + time_offset, 3),
+                    "end":   round(w.end   + time_offset, 3),
+                })
+
     segments = []
     for seg in (response.segments or []):
-        # Handle both dict and object response formats
         if isinstance(seg, dict):
             seg_start = seg.get("start", 0)
-            seg_end = seg.get("end", 0)
-            seg_text = seg.get("text", "").strip()
-            seg_words = seg.get("words", [])
+            seg_end   = seg.get("end",   0)
+            seg_text  = seg.get("text",  "").strip()
         else:
             seg_start = seg.start
-            seg_end = seg.end
-            seg_text = seg.text.strip()
-            seg_words = seg.words or []
+            seg_end   = seg.end
+            seg_text  = seg.text.strip()
 
-        seg_data = {
+        # Assign top-level words that fall within this segment's time range
+        seg_words = [
+            w for w in raw_words
+            if w["start"] >= round(seg_start + time_offset, 3)
+            and w["end"]  <= round(seg_end   + time_offset, 3)
+        ]
+
+        segments.append({
             "start": round(seg_start + time_offset, 3),
-            "end": round(seg_end + time_offset, 3),
-            "text": seg_text,
-            "words": []
-        }
+            "end":   round(seg_end   + time_offset, 3),
+            "text":  seg_text,
+            "words": seg_words,
+        })
 
-        for word in seg_words:
-            if isinstance(word, dict):
-                w_word = word.get("word", "").strip()
-                w_start = word.get("start", 0)
-                w_end = word.get("end", 0)
-            else:
-                w_word = word.word.strip()
-                w_start = word.start
-                w_end = word.end
+    # If Groq returned no segments but did return words, wrap all words in one segment
+    if not segments and raw_words:
+        segments.append({
+            "start": raw_words[0]["start"],
+            "end":   raw_words[-1]["end"],
+            "text":  " ".join(w["word"] for w in raw_words),
+            "words": raw_words,
+        })
 
-            seg_data["words"].append({
-                "word": w_word,
-                "start": round(w_start + time_offset, 3),
-                "end": round(w_end + time_offset, 3)
-            })
-
-        segments.append(seg_data)
-
-    total_words = sum(len(s.get("words", [])) for s in segments)
+    total_words = sum(len(s["words"]) for s in segments)
     print(f"[DEBUG] Segments: {len(segments)}, Total words with timestamps: {total_words}")
     return segments

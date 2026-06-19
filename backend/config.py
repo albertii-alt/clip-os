@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
     whisper_model: str = "medium"
     tmp_dir: str = "C:/tmp/clipos"
+    clips_dir: str = r"C:\clipos\clips"
     gemini_api_key: str = ""
     groq_api_key: str = ""
 
@@ -19,5 +20,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Ensure tmp dir exists
+# Ensure tmp dir and clips dir exist
 Path(settings.tmp_dir).mkdir(parents=True, exist_ok=True)
+Path(settings.clips_dir).mkdir(parents=True, exist_ok=True)

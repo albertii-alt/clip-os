@@ -115,17 +115,10 @@ def delete_job(job_id: str):
     result = supabase.table("jobs").select("*").eq("id", job_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Job not found")
-    job = result.data
 
-    # Delete clip files from Supabase Storage
-    clips_result = supabase.table("clips").select("storage_path").eq("job_id", job_id).execute()
-    clip_paths = [c["storage_path"] for c in (clips_result.data or []) if c.get("storage_path")]
-    if clip_paths:
-        supabase.storage.from_("clipos-assets").remove(clip_paths)
-
-    # Delete transcript from Supabase Storage
-    if job.get("transcript_path"):
-        supabase.storage.from_("clipos-assets").remove([job["transcript_path"]])
+    # Delete permanent local clips folder
+    clip_dir = os.path.join(settings.clips_dir, job_id)
+    shutil.rmtree(clip_dir, ignore_errors=True)
 
     # Delete job row (clips cascade via FK)
     supabase.table("jobs").delete().eq("id", job_id).execute()

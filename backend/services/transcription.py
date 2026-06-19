@@ -5,7 +5,6 @@ import math
 from pathlib import Path
 from groq import Groq
 from config import settings
-from database import supabase
 import time
 
 _groq_client = None
@@ -32,14 +31,6 @@ def transcribe(video_path: str, job_id: str) -> list[dict]:
         print("[INFO] Reusing existing transcript, skipping re-transcription")
         with open(transcript_path_local) as f:
             transcript_data = json.load(f)
-        job_row = supabase.table("jobs").select("transcript_path").eq("id", job_id).single().execute()
-        if not job_row.data or not job_row.data.get("transcript_path"):
-            storage_path = f"transcripts/{job_id}.json"
-            with open(transcript_path_local, "rb") as f:
-                supabase.storage.from_("clipos-assets").upload(
-                    storage_path, f, file_options={"upsert": "true"}
-                )
-            supabase.table("jobs").update({"transcript_path": storage_path}).eq("id", job_id).execute()
         return transcript_data["segments"]
 
     audio_path = str(tmp_dir / "audio.wav")
@@ -97,23 +88,6 @@ def transcribe(video_path: str, job_id: str) -> list[dict]:
     transcript_path_local = str(tmp_dir / "transcript.json")
     with open(transcript_path_local, "w") as f:
         json.dump(transcript_data, f)
-
-    # Upload to Supabase with retry
-    storage_path = f"transcripts/{job_id}.json"
-    for attempt in range(3):
-        try:
-            with open(transcript_path_local, "rb") as f:
-                supabase.storage.from_("clipos-assets").upload(
-                    storage_path, f,
-                    file_options={"upsert": "true"}
-                )
-            break
-        except Exception as upload_err:
-            if attempt == 2:
-                raise
-            time.sleep(3)
-
-    supabase.table("jobs").update({"transcript_path": storage_path}).eq("id", job_id).execute()
 
     return all_segments
 

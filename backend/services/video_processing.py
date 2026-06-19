@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import time
 import uuid
 import ffmpeg
@@ -269,15 +270,17 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
                 .run(quiet=False, cmd=FFMPEG_BIN)
             )
 
-        # Step 4: Upload to Supabase
+        # Step 4: Move clip to permanent local storage
         file_size_mb = os.path.getsize(final_clip_path) / (1024 * 1024)
         print(f"[DEBUG] Clip {idx} size: {file_size_mb:.2f} MB")
 
-        storage_path = f"clips/{job_id}/clip_{idx}.mp4"
-        with open(final_clip_path, "rb") as f:
-            supabase.storage.from_("clipos-assets").upload(storage_path, f)
+        clip_dest_dir = os.path.join(settings.clips_dir, job_id)
+        os.makedirs(clip_dest_dir, exist_ok=True)
+        dest_path = os.path.join(clip_dest_dir, f"clip_{idx}.mp4")
+        shutil.move(final_clip_path, dest_path)
 
-        public_url = supabase.storage.from_("clipos-assets").get_public_url(storage_path)
+        storage_path = dest_path
+        public_url   = f"http://localhost:8000/clips/{job_id}/clip_{idx}.mp4"
 
         # Step 5: Insert clip row
         supabase.table("clips").insert({

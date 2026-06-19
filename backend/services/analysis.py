@@ -25,6 +25,7 @@ This directive overrides general selection criteria. Only select moments that ma
 - Curiosity gap: Does it make someone want to know more?
 - Novelty: Is this surprising or counter-intuitive?
 - Completeness: Can it stand alone without context?
+- Short title quality: Can the moment be summarised in a punchy, curiosity-driven title under 8 words? Think bold declarative statements that create intrigue (e.g. "The Mistake That Cost Him Everything" or "Nobody Talks About This Anymore"). Do NOT write in all caps.
 
 ## Output Format
 Return ONLY a valid JSON array. No explanation. No markdown. No extra text.
@@ -34,6 +35,7 @@ Return ONLY a valid JSON array. No explanation. No markdown. No extra text.
     "start": "MM:SS",
     "end": "MM:SS",
     "hook": "Rewritten opening line optimized for retention",
+    "short_title": "Punchy title under 8 words for text overlay",
     "category": "emotional_story | controversy | educational | funny | curiosity_gap",
     "score": 85,
     "reason": "One sentence explaining why this moment works"
@@ -99,7 +101,7 @@ def analyze(segments: list[dict], campaign: dict | None) -> list[dict]:
     # Call Gemini Flash
     client = genai.Client(api_key=settings.gemini_api_key)
     response = client.models.generate_content(
-        model="gemini-3.5-flash",
+        model="gemini-3.1-flash-lite",
         contents=prompt
     )
 

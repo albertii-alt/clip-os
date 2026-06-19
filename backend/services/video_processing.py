@@ -1,16 +1,154 @@
 import json
+import os
 import time
 import uuid
 import ffmpeg
 from pathlib import Path
 from config import settings
 from database import supabase
-from services.captioning import generate_ass_subtitles
+from services.captioning import generate_ass_subtitles, compute_caption_chunks
 from services.face_tracking import (
     detect_face_positions,
     fill_gaps_and_smooth,
     build_dynamic_crop_filter,
 )
+
+
+FFMPEG_BIN  = r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
+FFPROBE_BIN = r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe"
+
+
+def _get_crop_filter(
+    raw_clip_path: str,
+    orig_width: int,
+    orig_height: int,
+    target_w: int,
+    target_h: int,
+    clip_duration: float,
+    clip_idx: int,
+) -> str:
+    """Run face tracking and return a crop filter string, with static fallback."""
+    _ft_start = time.perf_counter()
+    try:
+        raw_positions = detect_face_positions(raw_clip_path, 0.0, clip_duration)
+        smoothed      = fill_gaps_and_smooth(raw_positions)
+        if not smoothed:
+            raise ValueError("no usable positions")
+        crop_filter = build_dynamic_crop_filter(
+            smoothed, orig_width, orig_height, target_w, target_h, clip_duration
+        )
+    except Exception as e:
+        print(f"[WARN] Face tracking failed for clip {clip_idx} ({e}) — falling back to static center-crop")
+        static_x    = max(0, (orig_width - target_w) // 2)
+        crop_filter = f"crop={target_w}:{target_h}:{static_x}:0"
+    _ft_ms = (time.perf_counter() - _ft_start) * 1000
+    print(f"[INFO] Face tracking took {_ft_ms:.1f}ms for clip {clip_idx}")
+    return crop_filter
+
+
+def render_boxed_clip(
+    raw_clip_path: str,
+    final_clip_path: str,
+    orig_width: int,
+    orig_height: int,
+    clip_duration: float,
+    clip_idx: int,
+    transcript: dict,
+    clip_start: float,
+    clip_end: float,
+    short_title: str,
+    bg_color: str,
+) -> None:
+    """
+    Boxed layout:
+      - 1080x1080 square (face-tracked crop) centered on 1080x1920 canvas
+      - short_title drawn in top zone (above square)
+      - word-by-word captions drawn in bottom zone (below square)
+      - GPU encode with same settings as full_bleed path
+    Canvas: 1080 wide x 1920 tall
+    Square: 1080x1080, starts at y=420 (leaving 420px top + 420px bottom)
+    """
+    CANVAS_W    = 1080
+    CANVAS_H    = 1920
+    SQUARE_SIZE = 1080
+    SQUARE_Y    = (CANVAS_H - SQUARE_SIZE) // 2  # 420
+
+    text_color  = "white" if bg_color == "black" else "black"
+    pad_color   = bg_color
+
+    # ── Face-tracked square crop ──────────────────────────────────────────────
+    crop_filter = _get_crop_filter(
+        raw_clip_path, orig_width, orig_height,
+        SQUARE_SIZE, SQUARE_SIZE,
+        clip_duration, clip_idx,
+    )
+
+    # ── Build caption drawtext segments ──────────────────────────────────────
+    caption_y   = SQUARE_Y + SQUARE_SIZE + 30  # 30px below square
+    chunks      = compute_caption_chunks(
+        transcript["words"], clip_start, clip_end,
+        segments=transcript.get("segments", [])
+    )
+
+    def esc(s: str) -> str:
+        """Escape text for FFmpeg drawtext filter.
+        Order matters: backslash must be escaped first.
+        Single quotes replaced with backtick - ASCII, universally renderable,
+        no special meaning to FFmpeg's filter parser.
+        """
+        return (
+            s.replace("\\", "\\\\")  # \ → \\ (must be first)
+             .replace("'", "`")      # ' → ` (ASCII substitute, always renders)
+             .replace(":", "\\:")    # : → \: (key=value separator)
+             .replace("%", "\\%")    # % → \% (strftime expansion)
+             .replace(",", "\\,")    # , → \, (filter chain separator)
+             .replace("[", "\\[")    # [ → \[ (filter graph label)
+             .replace("]", "\\]")
+        )
+
+    caption_filters = ""
+    for text, t_start, t_end in chunks:
+        caption_filters += (
+            f",drawtext=text='{esc(text)}'"
+            f":fontsize=58:fontcolor={text_color}"
+            f":x=(w-text_w)/2:y={caption_y}"
+            f":enable='gte(t,{t_start:.3f})*lte(t,{t_end:.3f})'"
+        )
+
+    # ── Short title drawtext (static, top zone) ───────────────────────────────
+    title_y      = max(20, (SQUARE_Y - 120) // 2)  # vertically center in top zone
+    title_escaped = esc(short_title.upper())
+    title_filter  = (
+        f",drawtext=text='{title_escaped}'"
+        f":fontsize=48:fontcolor=black:fix_bounds=1:text_shaping=0"
+        f":x=(w-text_w)/2:y={title_y}"
+        f":box=1:boxcolor=white@0.92:boxborderw=16"
+    )
+
+    # ── Full filter chain ─────────────────────────────────────────────────────
+    # crop square → pad to 1080x1920 → title → captions
+    full_vf = (
+        f"{crop_filter},scale={SQUARE_SIZE}:{SQUARE_SIZE},"
+        f"pad={CANVAS_W}:{CANVAS_H}:(ow-iw)/2:{SQUARE_Y}:color={pad_color}"
+        f"{title_filter}"
+        f"{caption_filters}"
+    )
+    print(f"[DEBUG] boxed vf for clip {clip_idx}: {full_vf[:160]}{'...' if len(full_vf) > 160 else ''}")
+    print(f"[DEBUG] full_vf: {full_vf}")
+
+    (
+        ffmpeg
+        .input(raw_clip_path)
+        .output(
+            final_clip_path,
+            vf=full_vf,
+            vcodec="h264_nvenc",
+            acodec="aac",
+            **{"rc:v": "vbr", "cq:v": "26", "preset": "p4", "maxrate:v": "2500k", "bufsize:v": "5000k"}
+        )
+        .overwrite_output()
+        .run(quiet=False, cmd=FFMPEG_BIN)
+    )
 
 
 def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: dict | None = None):
@@ -22,7 +160,7 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
     clips_dir.mkdir(parents=True, exist_ok=True)
 
     # Get video dimensions
-    probe = ffmpeg.probe(video_path, cmd=r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe")
+    probe = ffmpeg.probe(video_path, cmd=FFPROBE_BIN)
     video_stream = next(
         (s for s in probe["streams"] if s["codec_type"] == "video"),
         None
@@ -57,15 +195,21 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
         print("[WARN] All moments filtered out by campaign length constraints — using original unfiltered moments")
         moments = original_moments
 
-    for idx, moment in enumerate(moments, start=1):
-        start = moment["start_seconds"]
-        end = moment["end_seconds"]
-        duration = end - start
-        clip_id = str(uuid.uuid4())
+    # Read layout settings from campaign
+    layout_style = 'full_bleed'
+    bg_color     = 'black'
+    if campaign:
+        layout_style = campaign.get('layout_style', 'full_bleed')
+        bg_color     = campaign.get('boxed_background_color', 'black')
 
-        raw_clip_path = str(clips_dir / f"raw_{idx}.mp4")
+    for idx, moment in enumerate(moments, start=1):
+        start    = moment["start_seconds"]
+        end      = moment["end_seconds"]
+        duration = end - start
+        clip_id  = str(uuid.uuid4())
+
+        raw_clip_path   = str(clips_dir / f"raw_{idx}.mp4")
         final_clip_path = str(clips_dir / f"clip_{idx}.mp4")
-        ass_path = str(clips_dir / f"clip_{idx}.ass")
 
         # Step 1: Cut raw clip
         (
@@ -73,62 +217,62 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
             .input(video_path, ss=start, t=duration)
             .output(raw_clip_path, c="copy")
             .overwrite_output()
-            .run(quiet=False, cmd=r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe")
+            .run(quiet=False, cmd=FFMPEG_BIN)
         )
 
-        # Step 2: Generate ASS captions
-        generate_ass_subtitles(
-            transcript["words"],
-            start,
-            end,
-            ass_path,
-            segments=transcript.get("segments", [])
-        )
-
-        # Step 3: Reframe 16:9 → 9:16 + burn captions
-        target_h = orig_height
-        target_w = int(orig_height * 9 / 16)
-        clip_duration = end - start
-
-        # Dynamic face tracking
-        _ft_start = time.perf_counter()
-        try:
-            raw_positions = detect_face_positions(raw_clip_path, 0.0, clip_duration)
-            smoothed      = fill_gaps_and_smooth(raw_positions)
-            if not smoothed:
-                raise ValueError("no usable positions")
-            crop_filter = build_dynamic_crop_filter(
-                smoothed, orig_width, orig_height, target_w, target_h, clip_duration
+        if layout_style == 'boxed':
+            # Step 2+3: Boxed layout — square + padded canvas + drawtext captions
+            short_title = moment.get("short_title") or moment.get("hook") or ""
+            render_boxed_clip(
+                raw_clip_path=raw_clip_path,
+                final_clip_path=final_clip_path,
+                orig_width=orig_width,
+                orig_height=orig_height,
+                clip_duration=duration,
+                clip_idx=idx,
+                transcript=transcript,
+                clip_start=start,
+                clip_end=end,
+                short_title=short_title,
+                bg_color=bg_color,
             )
-        except Exception as e:
-            print(f"[WARN] Face tracking failed for clip {idx} ({e}) — falling back to static center-crop")
-            static_x    = max(0, (orig_width - target_w) // 2)
-            crop_filter = f"crop={target_w}:{target_h}:{static_x}:0"
-        _ft_ms = (time.perf_counter() - _ft_start) * 1000
-        print(f"[INFO] Face tracking took {_ft_ms:.1f}ms for clip {idx}")
-
-        # Escape path for FFmpeg subtitle filter on Windows
-        ass_path_escaped = ass_path.replace("\\", "/").replace(":", "\\:")
-
-        full_vf = f"{crop_filter},scale=1080:1920,subtitles='{ass_path_escaped}'"
-        print(f"[DEBUG] vf filter for clip {idx}: {full_vf[:120]}{'...' if len(full_vf) > 120 else ''}")
-
-        (
-            ffmpeg
-            .input(raw_clip_path)
-            .output(
-                final_clip_path,
-                vf=full_vf,
-                vcodec="h264_nvenc",
-                acodec="aac",
-                **{"rc:v": "vbr", "cq:v": "26", "preset": "p4", "maxrate:v": "2500k", "bufsize:v": "5000k"}
+        else:
+            # Step 2: Generate ASS captions (full_bleed path — unchanged)
+            ass_path        = str(clips_dir / f"clip_{idx}.ass")
+            ass_path_escaped = ass_path.replace("\\", "/").replace(":", "\\:")
+            generate_ass_subtitles(
+                transcript["words"],
+                start,
+                end,
+                ass_path,
+                segments=transcript.get("segments", [])
             )
-            .overwrite_output()
-            .run(quiet=False, cmd=r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe")
-        )
+
+            # Step 3: Face-tracked crop → scale 1080x1920 → ASS subtitles
+            target_h    = orig_height
+            target_w    = int(orig_height * 9 / 16)
+            crop_filter = _get_crop_filter(
+                raw_clip_path, orig_width, orig_height,
+                target_w, target_h, duration, idx
+            )
+            full_vf = f"{crop_filter},scale=1080:1920,subtitles='{ass_path_escaped}'"
+            print(f"[DEBUG] vf filter for clip {idx}: {full_vf[:120]}{'...' if len(full_vf) > 120 else ''}")
+
+            (
+                ffmpeg
+                .input(raw_clip_path)
+                .output(
+                    final_clip_path,
+                    vf=full_vf,
+                    vcodec="h264_nvenc",
+                    acodec="aac",
+                    **{"rc:v": "vbr", "cq:v": "26", "preset": "p4", "maxrate:v": "2500k", "bufsize:v": "5000k"}
+                )
+                .overwrite_output()
+                .run(quiet=False, cmd=FFMPEG_BIN)
+            )
 
         # Step 4: Upload to Supabase
-        import os
         file_size_mb = os.path.getsize(final_clip_path) / (1024 * 1024)
         print(f"[DEBUG] Clip {idx} size: {file_size_mb:.2f} MB")
 

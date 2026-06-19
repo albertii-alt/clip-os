@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Campaign } from '@/lib/api';
+import { Campaign, patchCampaign } from '@/lib/api';
 
 interface CampaignFormProps {
   onSubmit: (data: Omit<Campaign, 'id' | 'created_at'>) => void;
   initial?: Partial<Campaign>;
+  campaign?: Campaign;
+  onUpdated?: () => void;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -17,20 +19,24 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-export default function CampaignForm({ onSubmit, initial }: CampaignFormProps) {
-  const [name, setName] = useState(initial?.name || '');
-  const [handle, setHandle] = useState(initial?.creator_handle || '');
-  const [platform, setPlatform] = useState(initial?.platform || 'tiktok');
-  const [payout, setPayout] = useState(initial?.payout_per_1k || 5);
-  const [minLen, setMinLen] = useState(initial?.min_clip_length || 30);
-  const [maxLen, setMaxLen] = useState(initial?.max_clip_length || 60);
-  const [hashtags, setHashtags] = useState(initial?.required_hashtags?.join(', ') || '');
-  const [tags, setTags] = useState(initial?.required_tags?.join(', ') || '');
-  const [forbidden, setForbidden] = useState(initial?.forbidden_topics?.join(', ') || '');
-  const [styleNotes, setStyleNotes] = useState(initial?.style_notes || '');
+export default function CampaignForm({ onSubmit, initial, campaign, onUpdated }: CampaignFormProps) {
+  const isEditing = !!campaign;
+  const seed = campaign ?? initial;
+  const [name, setName] = useState(seed?.name || '');
+  const [handle, setHandle] = useState(seed?.creator_handle || '');
+  const [platform, setPlatform] = useState(seed?.platform || 'tiktok');
+  const [payout, setPayout] = useState(seed?.payout_per_1k || 5);
+  const [minLen, setMinLen] = useState(seed?.min_clip_length || 30);
+  const [maxLen, setMaxLen] = useState(seed?.max_clip_length || 60);
+  const [hashtags, setHashtags] = useState(seed?.required_hashtags?.join(', ') || '');
+  const [tags, setTags] = useState(seed?.required_tags?.join(', ') || '');
+  const [forbidden, setForbidden] = useState(seed?.forbidden_topics?.join(', ') || '');
+  const [styleNotes, setStyleNotes] = useState(seed?.style_notes || '');
+  const [layoutStyle, setLayoutStyle] = useState<'full_bleed' | 'boxed'>(seed?.layout_style || 'full_bleed');
+  const [bgColor, setBgColor] = useState<'black' | 'white'>(seed?.boxed_background_color || 'black');
 
-  function handleSubmit() {
-    onSubmit({
+  async function handleSubmit() {
+    const data = {
       name,
       creator_handle: handle,
       platform,
@@ -41,7 +47,15 @@ export default function CampaignForm({ onSubmit, initial }: CampaignFormProps) {
       required_tags: tags.split(',').map((s) => s.trim()).filter(Boolean),
       forbidden_topics: forbidden.split(',').map((s) => s.trim()).filter(Boolean),
       style_notes: styleNotes,
-    });
+      layout_style: layoutStyle,
+      boxed_background_color: bgColor,
+    };
+    if (isEditing && campaign) {
+      await patchCampaign(campaign.id, data);
+      onUpdated?.();
+    } else {
+      onSubmit(data);
+    }
   }
 
   const inputStyle = {
@@ -102,10 +116,52 @@ export default function CampaignForm({ onSubmit, initial }: CampaignFormProps) {
           rows={2} placeholder="Focus on emotional moments..."
           className="w-full px-3 py-2 rounded text-sm outline-none resize-none" style={inputStyle} />
       </Field>
+
+      <Field label="Clip Layout">
+        <div className="flex gap-2">
+          {(['full_bleed', 'boxed'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setLayoutStyle(mode)}
+              className="px-3 py-2 rounded text-xs font-medium transition-colors"
+              style={{
+                background: layoutStyle === mode ? 'var(--accent)' : 'transparent',
+                color: layoutStyle === mode ? '#000' : 'var(--muted)',
+                border: `1px solid ${layoutStyle === mode ? 'var(--accent)' : 'var(--border)'}`,
+              }}
+            >
+              {mode === 'full_bleed' ? 'Full-bleed crop' : 'Boxed (square + captions outside)'}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      {layoutStyle === 'boxed' && (
+        <Field label="Background Color">
+          <div className="flex gap-2">
+            {(['black', 'white'] as const).map((color) => (
+              <button
+                key={color}
+                type="button"
+                onClick={() => setBgColor(color)}
+                className="px-3 py-2 rounded text-xs font-medium transition-colors capitalize"
+                style={{
+                  background: bgColor === color ? 'var(--accent)' : 'transparent',
+                  color: bgColor === color ? '#000' : 'var(--muted)',
+                  border: `1px solid ${bgColor === color ? 'var(--accent)' : 'var(--border)'}`,
+                }}
+              >
+                {color}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
       <button onClick={handleSubmit}
         className="w-full py-2 rounded text-sm font-medium"
         style={{ background: 'var(--accent)', color: '#000' }}>
-        Save Campaign
+        {isEditing ? 'Update Campaign' : 'Save Campaign'}
       </button>
     </div>
   );

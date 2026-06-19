@@ -12,6 +12,8 @@ export interface Campaign {
   required_tags: string[];
   forbidden_topics: string[];
   style_notes?: string;
+  layout_style: 'full_bleed' | 'boxed';
+  boxed_background_color: 'black' | 'white';
   created_at: string;
 }
 
@@ -67,6 +69,19 @@ export async function createCampaign(data: Omit<Campaign, 'id' | 'created_at'>):
 export async function updateCampaign(id: string, data: Partial<Campaign>): Promise<Campaign> {
   const res = await fetch(`${API_URL}/campaigns/${id}`, {
     method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update campaign');
+  return res.json();
+}
+
+export async function patchCampaign(
+  id: string,
+  data: Partial<Omit<Campaign, 'id' | 'created_at'>>
+): Promise<Campaign> {
+  const res = await fetch(`${API_URL}/campaigns/${id}`, {
+    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });

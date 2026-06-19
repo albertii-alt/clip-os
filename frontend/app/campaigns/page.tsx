@@ -8,6 +8,7 @@ import CampaignForm from '@/components/campaigns/CampaignForm';
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function load() {
@@ -26,6 +27,17 @@ export default function CampaignsPage() {
 
   async function handleDelete(id: string) {
     await deleteCampaign(id);
+    if (editingCampaign?.id === id) setEditingCampaign(null);
+    load();
+  }
+
+  function handleEdit(campaign: Campaign) {
+    setEditingCampaign(campaign);
+    setShowForm(false);
+  }
+
+  function handleUpdated() {
+    setEditingCampaign(null);
     load();
   }
 
@@ -39,7 +51,7 @@ export default function CampaignsPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => { setShowForm(!showForm); setEditingCampaign(null); }}
           className="px-4 py-2 rounded-md text-sm font-medium"
           style={{ background: 'var(--accent)', color: '#000' }}
         >
@@ -49,10 +61,32 @@ export default function CampaignsPage() {
 
       {showForm && <CampaignForm onSubmit={handleCreate} />}
 
+      {editingCampaign && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium" style={{ color: 'var(--muted)' }}>
+              Editing: {editingCampaign.name}
+            </p>
+            <button
+              onClick={() => setEditingCampaign(null)}
+              className="text-xs px-2 py-1 rounded"
+              style={{ color: 'var(--muted)', border: '1px solid var(--border)' }}
+            >
+              Cancel Edit
+            </button>
+          </div>
+          <CampaignForm
+            onSubmit={handleCreate}
+            campaign={editingCampaign}
+            onUpdated={handleUpdated}
+          />
+        </div>
+      )}
+
       {loading ? (
         <p style={{ color: 'var(--muted)' }}>Loading...</p>
       ) : (
-        <CampaignList campaigns={campaigns} onDelete={handleDelete} />
+        <CampaignList campaigns={campaigns} onDelete={handleDelete} onEdit={handleEdit} />
       )}
     </div>
   );

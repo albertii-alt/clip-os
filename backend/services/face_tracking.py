@@ -151,15 +151,18 @@ def build_dynamic_crop_filter(
         positions = [positions[int(i * step)] for i in range(48)] + [positions[-1]]
 
     # Build a linearly-interpolating expression between consecutive keyframes.
-    # For each segment [t0, t1] the x offset glides from px0 to px1 using:
-    #   lerp(px0, px1, (t - t0) / (t1 - t0))
-    # which equals:  px0 + (px1 - px0) * (t - t0) / (t1 - t0)
-    #
-    # Commas inside expressions must be escaped as \, — FFmpeg's filter chain
-    # parser splits on bare commas even when args are a subprocess list.
-    def C(v: str) -> str:
-        """Escape a comma for use inside an FFmpeg filter expression."""
-        return v.replace(",", "\\,")
+    # Uses gte(t,t0)*lte(t,t1) instead of between(t,t0,t1) to avoid commas
+    # inside the expression — ffmpeg-python's vf= quoting does not reliably
+    # preserve \, escapes, causing bare floats to appear as filter tokens.
+    def make_lerp(px0: int, px1: int, t0: float, t1: float) -> str:
+        dt = t1 - t0
+        if dt <= 0 or px0 == px1:
+            return str(px0)
+        return f"({px0}+({px1}-{px0})*(t-{t0:.4f})/{dt:.4f})"
+
+    def make_cond(t0: float, t1: float) -> str:
+        # gte(t,t0)*lte(t,t1) == 1 only when t0 <= t <= t1, no commas needed
+        return f"gte(t\\,{t0:.4f})*lte(t\\,{t1:.4f})"
 
     px_values = [norm_to_px(nx) for _, nx in positions]
     px_final  = px_values[-1]
@@ -171,14 +174,11 @@ def build_dynamic_crop_filter(
         t1  = positions[i + 1][0]
         px0 = px_values[i]
         px1 = px_values[i + 1]
-        dt  = t1 - t0
-        if dt <= 0:
+        if t1 - t0 <= 0:
             continue
-        # Linear interpolation: px0 + (px1-px0) * (t-t0)/dt
-        # Written as an FFmpeg expression with escaped commas.
-        frac = C(f"(t-{t0:.4f})/{dt:.4f}")
-        lerp = C(f"{px0}+({px1}-{px0})*{frac}")
-        cond = C(f"between(t,{t0:.4f},{t1:.4f})")
+        lerp = make_lerp(px0, px1, t0, t1)
+        cond = make_cond(t0, t1)
+        # if(cond, lerp, fallback) — commas here are inside if() so must be \,
         expr = f"if({cond}\\,{lerp}\\,{expr})"
 
     return f"crop={target_width}:{target_height}:{expr}:0"

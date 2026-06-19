@@ -3,9 +3,10 @@ import { Campaign } from '@/lib/api';
 interface CampaignCardProps {
   campaign: Campaign;
   onDelete: (id: string) => void;
+  onEdit: (campaign: Campaign) => void;
 }
 
-export default function CampaignCard({ campaign, onDelete }: CampaignCardProps) {
+export default function CampaignCard({ campaign, onDelete, onEdit }: CampaignCardProps) {
   return (
     <div
       className="rounded-lg border p-4 space-y-2"
@@ -13,13 +14,22 @@ export default function CampaignCard({ campaign, onDelete }: CampaignCardProps) 
     >
       <div className="flex items-center justify-between">
         <p className="font-medium">{campaign.name}</p>
-        <button
-          onClick={() => onDelete(campaign.id)}
-          className="text-xs px-2 py-1 rounded"
-          style={{ background: '#ef444420', color: '#ef4444' }}
-        >
-          Delete
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => onEdit(campaign)}
+            className="text-xs px-2 py-1 rounded"
+            style={{ background: 'rgba(74,222,128,0.1)', color: 'var(--accent)' }}
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => onDelete(campaign.id)}
+            className="text-xs px-2 py-1 rounded"
+            style={{ background: '#ef444420', color: '#ef4444' }}
+          >
+            Delete
+          </button>
+        </div>
       </div>
       <div className="flex gap-3 text-xs" style={{ color: 'var(--muted)' }}>
         <span className="capitalize">{campaign.platform}</span>

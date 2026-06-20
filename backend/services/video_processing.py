@@ -18,6 +18,13 @@ from services.face_tracking import (
 FFMPEG_BIN  = r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
 FFPROBE_BIN = r"C:\Users\ivylxvie\Downloads\ffmpeg-master-latest-win64-gpl\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe"
 
+FONT_PATHS = {
+    "arial":   {"bold": r"C:\Windows\Fonts\arialbd.ttf",  "regular": r"C:\Windows\Fonts\arial.ttf"},
+    "impact":  {"bold": r"C:\Windows\Fonts\impact.ttf",   "regular": r"C:\Windows\Fonts\impact.ttf"},
+    "segoe":   {"bold": r"C:\Windows\Fonts\segoeuib.ttf", "regular": r"C:\Windows\Fonts\segoeui.ttf"},
+    "calibri": {"bold": r"C:\Windows\Fonts\calibrib.ttf", "regular": r"C:\Windows\Fonts\calibri.ttf"},
+}
+
 # Suppress FFmpeg Fontconfig error spam on Windows
 os.environ.setdefault("FC_CONFIG_FILE", "")
 os.environ.setdefault("FONTCONFIG_FILE", "")
@@ -63,6 +70,7 @@ def render_boxed_clip(
     clip_end: float,
     short_title: str,
     bg_color: str,
+    font_choice: str = 'arial',
 ) -> None:
     """
     Boxed layout:
@@ -81,6 +89,11 @@ def render_boxed_clip(
     text_color  = "white" if bg_color == "black" else "black"
     pad_color   = bg_color
 
+    # Resolve font paths
+    font_set     = FONT_PATHS.get(font_choice, FONT_PATHS["arial"])
+    title_font   = font_set["bold"]
+    caption_font = font_set["regular"]
+
     # ── Face-tracked square crop ──────────────────────────────────────────────
     crop_filter = _get_crop_filter(
         raw_clip_path, orig_width, orig_height,
@@ -96,7 +109,7 @@ def render_boxed_clip(
     )
 
     def esc(s: str) -> str:
-        """Escape text for FFmpeg drawtext filter.
+        """Escape text content for FFmpeg drawtext filter.
         Order matters: backslash must be escaped first.
         Single quotes replaced with backtick - ASCII, universally renderable,
         no special meaning to FFmpeg's filter parser.
@@ -111,21 +124,26 @@ def render_boxed_clip(
              .replace("]", "\\]")
         )
 
+    def esc_path(path: str) -> str:
+        """Escape a Windows file path for use as an FFmpeg filter option value."""
+        return path.replace("\\", "/").replace(":", "\\:")
+
     caption_filters = ""
     for text, t_start, t_end in chunks:
         caption_filters += (
             f",drawtext=text='{esc(text)}'"
-            f":fontsize=58:fontcolor={text_color}"
+            f":fontfile='{esc_path(caption_font)}':fontsize=58:fontcolor={text_color}"
             f":x=(w-text_w)/2:y={caption_y}"
             f":enable='gte(t,{t_start:.3f})*lte(t,{t_end:.3f})'"
         )
 
-    # ── Short title drawtext (static, top zone) ───────────────────────────────
-    title_y      = max(20, (SQUARE_Y - 120) // 2)  # vertically center in top zone
+    # ── Short title drawtext (tight above square) ───────────────────────────────
+    TITLE_GAP = 25   # px between title box bottom and square top
+    title_y   = max(20, SQUARE_Y - TITLE_GAP - 70)
     title_escaped = esc(short_title.upper())
     title_filter  = (
         f",drawtext=text='{title_escaped}'"
-        f":fontsize=48:fontcolor=black:fix_bounds=1:text_shaping=0"
+        f":fontfile='{esc_path(title_font)}':fontsize=48:fontcolor=black:fix_bounds=1:text_shaping=0"
         f":x=(w-text_w)/2:y={title_y}"
         f":box=1:boxcolor=white@0.92:boxborderw=16"
     )
@@ -156,7 +174,7 @@ def render_boxed_clip(
     )
 
 
-def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: dict | None = None, layout_style: str = 'full_bleed', bg_color: str = 'black'):
+def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: dict | None = None, layout_style: str = 'full_bleed', bg_color: str = 'black', font_choice: str = 'arial'):
     """
     For each moment: cut → reframe to 9:16 → burn captions → upload to Supabase.
     """
@@ -233,6 +251,7 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
                 clip_end=end,
                 short_title=short_title,
                 bg_color=bg_color,
+                font_choice=font_choice,
             )
         else:
             # Step 2: Generate ASS captions (full_bleed path)

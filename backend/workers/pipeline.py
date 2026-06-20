@@ -94,6 +94,7 @@ def run_pipeline(self, job_id: str):
                 campaign=campaign,
                 layout_style=job.get("layout_style", "full_bleed"),
                 bg_color=job.get("boxed_background_color", "black"),
+                font_choice=job.get("font_choice", "arial"),
             )
 
         # Terminal: success

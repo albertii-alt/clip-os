@@ -29,6 +29,7 @@ export interface Job {
   transcript_path?: string;
   layout_style: 'full_bleed' | 'boxed';
   boxed_background_color: 'black' | 'white';
+  font_choice: string;
   created_at: string;
   updated_at: string;
 }
@@ -110,6 +111,7 @@ export async function createJobFromUrl(
   campaignId?: string,
   layoutStyle: string = 'full_bleed',
   bgColor: string = 'black',
+  fontChoice: string = 'arial',
 ): Promise<{ job_id: string; status: string }> {
   const formData = new FormData();
   formData.append('source_type', 'youtube_url');
@@ -117,6 +119,7 @@ export async function createJobFromUrl(
   if (campaignId) formData.append('campaign_id', campaignId);
   formData.append('layout_style', layoutStyle);
   formData.append('boxed_background_color', bgColor);
+  formData.append('font_choice', fontChoice);
   const res = await fetch(`${API_URL}/jobs/`, { method: 'POST', body: formData });
   if (!res.ok) throw new Error('Failed to create job');
   return res.json();
@@ -140,6 +143,7 @@ export async function createJobFromLocalPath(
   campaignId?: string,
   layoutStyle: string = 'full_bleed',
   bgColor: string = 'black',
+  fontChoice: string = 'arial',
 ): Promise<{ job_id: string; status: string }> {
   const formData = new FormData();
   formData.append('source_type', 'local_path');
@@ -147,6 +151,7 @@ export async function createJobFromLocalPath(
   if (campaignId) formData.append('campaign_id', campaignId);
   formData.append('layout_style', layoutStyle);
   formData.append('boxed_background_color', bgColor);
+  formData.append('font_choice', fontChoice);
   const res = await fetch(`${API_URL}/jobs/`, { method: 'POST', body: formData });
   if (!res.ok) throw new Error('Failed to create job');
   return res.json();

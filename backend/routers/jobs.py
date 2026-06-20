@@ -32,6 +32,7 @@ async def create_job(
     campaign_id: Optional[str] = Form(None),
     layout_style: str = Form('full_bleed'),
     boxed_background_color: str = Form('black'),
+    font_choice: str = Form('arial'),
     file: Optional[UploadFile] = File(None)
 ):
     job_id = str(uuid.uuid4())
@@ -43,6 +44,7 @@ async def create_job(
         "campaign_id": campaign_id,
         "layout_style": layout_style,
         "boxed_background_color": boxed_background_color,
+        "font_choice": font_choice,
         "status": "queued"
     }
 

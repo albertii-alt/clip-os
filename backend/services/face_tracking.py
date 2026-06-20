@@ -1,24 +1,13 @@
 """
 Face tracking service — dynamic horizontal crop positioning via MediaPipe.
+Uses the legacy mp.solutions.face_detection API which has no telemetry/network calls.
 """
 
-import urllib.request
-from pathlib import Path
+import os
+os.environ["GLOG_minloglevel"] = "2"
 
 import cv2
 import mediapipe as mp
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision as mp_vision
-
-MODEL_PATH = Path(__file__).parent.parent / "benchmarks" / "blaze_face_short_range.tflite"
-MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-
-
-def _ensure_model() -> None:
-    if not MODEL_PATH.exists():
-        print(f"[INFO] Downloading face detection model to {MODEL_PATH} ...")
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-        print("[INFO] Model download complete.")
 
 
 def detect_face_positions(
@@ -32,12 +21,6 @@ def detect_face_positions(
     Returns list of (timestamp_relative_to_start, normalized_x | None).
     normalized_x is face center x as fraction of frame width (0.0–1.0).
     """
-    _ensure_model()
-
-    base_options     = mp_python.BaseOptions(model_asset_path=str(MODEL_PATH))
-    detector_options = mp_vision.FaceDetectorOptions(base_options=base_options)
-    detector         = mp_vision.FaceDetector.create_from_options(detector_options)
-
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         return []
@@ -50,22 +33,22 @@ def detect_face_positions(
     results: list[tuple[float, float | None]] = []
     frame_idx = start_frame
 
-    with detector:
+    with mp.solutions.face_detection.FaceDetection(
+        model_selection=0, min_detection_confidence=0.5
+    ) as detector:
         while frame_idx <= end_frame:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if not ret:
                 break
 
-            w          = frame.shape[1]
             rgb        = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image   = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            det_result = detector.detect(mp_image)
+            det_result = detector.process(rgb)
             timestamp  = (frame_idx - start_frame) / video_fps
 
             if det_result.detections:
-                bbox   = det_result.detections[0].bounding_box
-                norm_x = (bbox.origin_x + bbox.width / 2) / w
+                bbox   = det_result.detections[0].location_data.relative_bounding_box
+                norm_x = bbox.xmin + bbox.width / 2
                 results.append((timestamp, max(0.0, min(1.0, norm_x))))
             else:
                 results.append((timestamp, None))

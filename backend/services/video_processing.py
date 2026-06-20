@@ -7,7 +7,7 @@ import ffmpeg
 from pathlib import Path
 from config import settings
 from database import supabase
-from services.captioning import generate_ass_subtitles, compute_caption_chunks
+from services.captioning import generate_ass_subtitles, compute_caption_chunks, debug_find_orphan_words
 from services.face_tracking import (
     detect_face_positions,
     fill_gaps_and_smooth,
@@ -196,6 +196,9 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
     # Load transcript for captions
     with open(str(tmp_dir / "transcript.json")) as f:
         transcript = json.load(f)
+
+    # Diagnostic: log any words in segment text with no timestamp entry
+    debug_find_orphan_words(transcript.get("segments", []))
 
     # Enforce campaign clip length constraints
     min_length = 15  # default

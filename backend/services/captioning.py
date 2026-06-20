@@ -32,6 +32,17 @@ def chunk_text(text: str, max_chars: int = 20) -> list[str]:
     return lines
 
 
+def debug_find_orphan_words(segments: list[dict]) -> None:
+    for seg in segments:
+        seg_text_words    = seg.get("text", "").strip().split()
+        timestamped_words = [w["word"].strip().rstrip(".,!?;:") for w in seg.get("words", [])]
+        timestamped_set   = set(w.lower() for w in timestamped_words)
+        for tw in seg_text_words:
+            clean = tw.strip(".,!?;:\"'").lower()
+            if clean and clean not in timestamped_set:
+                print(f"[DEBUG ORPHAN] Word '{tw}' in segment text but missing from word timestamps. Segment: \"{seg.get('text', '')[:80]}\"")
+
+
 def compute_caption_chunks(
     words: list[dict],
     clip_start: float,

@@ -32,15 +32,101 @@ def chunk_text(text: str, max_chars: int = 20) -> list[str]:
     return lines
 
 
-def debug_find_orphan_words(segments: list[dict]) -> None:
+def _clean(word: str) -> str:
+    """Lowercase + strip punctuation for fuzzy matching."""
+    return word.strip(".,!?;:\"'").lower()
+
+
+def recover_orphan_words(segments: list[dict]) -> list[dict]:
+    """
+    For each segment, ensure every word in segment['text'] has a corresponding
+    entry in segment['words'] with valid timestamps. Words missing timestamps
+    (orphans) are inserted with interpolated start/end times.
+    Returns the segments list with all words arrays complete and in order.
+    """
     for seg in segments:
-        seg_text_words    = seg.get("text", "").strip().split()
-        timestamped_words = [w["word"].strip().rstrip(".,!?;:") for w in seg.get("words", [])]
-        timestamped_set   = set(w.lower() for w in timestamped_words)
-        for tw in seg_text_words:
-            clean = tw.strip(".,!?;:\"'").lower()
-            if clean and clean not in timestamped_set:
-                print(f"[DEBUG ORPHAN] Word '{tw}' in segment text but missing from word timestamps. Segment: \"{seg.get('text', '')[:80]}\"")
+        seg_start  = seg.get("start", 0.0)
+        seg_end    = seg.get("end",   0.0)
+        text_words = seg.get("text", "").strip().split()
+        ts_words   = seg.get("words", [])  # existing timestamped words
+
+        if not text_words:
+            continue
+
+        # Build a lookup of clean->entry from existing timestamped words.
+        # We walk through ts_words in order to handle repeated words correctly.
+        ts_queue = list(ts_words)  # consumed left-to-right
+
+        # First pass: align text_words against ts_queue by matching clean tokens.
+        # Produce a list of (original_text_word, matched_entry_or_None).
+        aligned: list[tuple[str, dict | None]] = []
+        ts_idx = 0
+        for tw in text_words:
+            tw_clean = _clean(tw)
+            # Look ahead in ts_queue for a match within a small window
+            matched = None
+            for lookahead in range(min(5, len(ts_queue) - ts_idx)):
+                candidate = ts_queue[ts_idx + lookahead]
+                if _clean(candidate["word"]) == tw_clean:
+                    # consume everything up to and including this match
+                    ts_idx += lookahead + 1
+                    matched = candidate
+                    break
+            aligned.append((tw, matched))
+
+        # Second pass: interpolate timestamps for orphans.
+        # Find nearest anchored neighbor on each side.
+        result: list[dict] = []
+        n = len(aligned)
+        for i, (tw, entry) in enumerate(aligned):
+            if entry is not None:
+                result.append(entry)
+                continue
+
+            # Find the nearest timestamped word before this orphan
+            prev_end = seg_start
+            for j in range(i - 1, -1, -1):
+                if aligned[j][1] is not None:
+                    prev_end = aligned[j][1]["end"]
+                    break
+
+            # Find the nearest timestamped word after this orphan
+            next_start = seg_end
+            for j in range(i + 1, n):
+                if aligned[j][1] is not None:
+                    next_start = aligned[j][1]["start"]
+                    break
+
+            # Count consecutive orphans in this gap to split time evenly
+            gap_orphans = []
+            for j in range(n):
+                if aligned[j][1] is None:
+                    # belongs to same gap if surrounded by same anchors
+                    lo = seg_start
+                    hi = seg_end
+                    for k in range(j - 1, -1, -1):
+                        if aligned[k][1] is not None:
+                            lo = aligned[k][1]["end"]
+                            break
+                    for k in range(j + 1, n):
+                        if aligned[k][1] is not None:
+                            hi = aligned[k][1]["start"]
+                            break
+                    if lo == prev_end and hi == next_start:
+                        gap_orphans.append(j)
+
+            # Position of current orphan within its gap
+            my_pos   = gap_orphans.index(i) if i in gap_orphans else 0
+            gap_size = len(gap_orphans) if gap_orphans else 1
+            slot     = (next_start - prev_end) / gap_size
+            w_start  = round(prev_end + my_pos * slot, 3)
+            w_end    = round(w_start + slot, 3)
+
+            result.append({"word": tw, "start": w_start, "end": w_end})
+
+        seg["words"] = result
+
+    return segments
 
 
 def compute_caption_chunks(

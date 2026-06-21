@@ -1,13 +1,14 @@
 import json
 import os
 import shutil
+import subprocess
 import time
 import uuid
 import ffmpeg
 from pathlib import Path
 from config import settings
 from database import supabase
-from services.captioning import generate_ass_subtitles, compute_caption_chunks, debug_find_orphan_words
+from services.captioning import generate_ass_subtitles, compute_caption_chunks, recover_orphan_words
 from services.face_tracking import (
     detect_face_positions,
     fill_gaps_and_smooth,
@@ -28,6 +29,16 @@ FONT_PATHS = {
 # Suppress FFmpeg Fontconfig error spam on Windows
 os.environ.setdefault("FC_CONFIG_FILE", "")
 os.environ.setdefault("FONTCONFIG_FILE", "")
+
+
+def _run(cmd: list[str]) -> None:
+    """Run an FFmpeg command via subprocess with readable error output on failure."""
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"FFmpeg failed (exit {e.returncode}):\n{e.stderr.decode(errors='replace')}"
+        ) from None
 
 
 def _get_crop_filter(
@@ -102,8 +113,8 @@ def render_boxed_clip(
     )
 
     # ── Build caption drawtext segments ──────────────────────────────────────
-    caption_y   = SQUARE_Y + SQUARE_SIZE + 30  # 30px below square
-    chunks      = compute_caption_chunks(
+    caption_y = SQUARE_Y + SQUARE_SIZE + 30  # 30px below square
+    chunks    = compute_caption_chunks(
         transcript["words"], clip_start, clip_end,
         segments=transcript.get("segments", [])
     )
@@ -137,9 +148,9 @@ def render_boxed_clip(
             f":enable='gte(t,{t_start:.3f})*lte(t,{t_end:.3f})'"
         )
 
-    # ── Short title drawtext (tight above square) ───────────────────────────────
-    TITLE_GAP = 25   # px between title box bottom and square top
-    title_y   = max(20, SQUARE_Y - TITLE_GAP - 70)
+    # ── Short title drawtext (tight above square) ─────────────────────────────
+    TITLE_GAP     = 25  # px between title box bottom and square top
+    title_y       = max(20, SQUARE_Y - TITLE_GAP - 70)
     title_escaped = esc(short_title.upper())
     title_filter  = (
         f",drawtext=text='{title_escaped}'"
@@ -149,7 +160,6 @@ def render_boxed_clip(
     )
 
     # ── Full filter chain ─────────────────────────────────────────────────────
-    # crop square → pad to 1080x1920 → title → captions
     full_vf = (
         f"{crop_filter},scale={SQUARE_SIZE}:{SQUARE_SIZE},"
         f"pad={CANVAS_W}:{CANVAS_H}:(ow-iw)/2:{SQUARE_Y}:color={pad_color}"
@@ -157,28 +167,26 @@ def render_boxed_clip(
         f"{caption_filters}"
     )
     print(f"[DEBUG] boxed vf for clip {clip_idx}: {full_vf[:160]}{'...' if len(full_vf) > 160 else ''}")
-    print(f"[DEBUG] full_vf: {full_vf}")
 
-    (
-        ffmpeg
-        .input(raw_clip_path)
-        .output(
-            final_clip_path,
-            vf=full_vf,
-            vcodec="h264_nvenc",
-            acodec="aac",
-            **{"rc:v": "vbr", "cq:v": "26", "preset": "p4", "maxrate:v": "2500k", "bufsize:v": "5000k"}
-        )
-        .overwrite_output()
-        .run(quiet=False, cmd=FFMPEG_BIN)
-    )
+    # Boxed re-encode — explicit -map before output filename
+    _run([
+        FFMPEG_BIN, "-y",
+        "-i", raw_clip_path,
+        "-map", "0:v:0", "-map", "0:a:0",
+        "-vf", full_vf,
+        "-vcodec", "h264_nvenc", "-acodec", "aac",
+        "-map_metadata", "-1",
+        "-rc:v", "vbr", "-cq:v", "26", "-preset", "p4",
+        "-maxrate:v", "2500k", "-bufsize:v", "5000k",
+        final_clip_path,
+    ])
 
 
 def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: dict | None = None, layout_style: str = 'full_bleed', bg_color: str = 'black', font_choice: str = 'arial'):
     """
-    For each moment: cut → reframe to 9:16 → burn captions → upload to Supabase.
+    For each moment: cut → reframe to 9:16 → burn captions → move to clips_dir.
     """
-    tmp_dir = Path(settings.tmp_dir) / job_id
+    tmp_dir   = Path(settings.tmp_dir) / job_id
     clips_dir = tmp_dir / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
 
@@ -190,25 +198,26 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
     )
     if video_stream is None:
         raise ValueError("No video stream found in file")
-    orig_width = int(video_stream["width"])
+    orig_width  = int(video_stream["width"])
     orig_height = int(video_stream["height"])
 
     # Load transcript for captions
     with open(str(tmp_dir / "transcript.json")) as f:
         transcript = json.load(f)
 
-    # Diagnostic: log any words in segment text with no timestamp entry
-    debug_find_orphan_words(transcript.get("segments", []))
+    # Recover orphan words (in segment text but missing from word timestamps)
+    recover_orphan_words(transcript.get("segments", []))
+    transcript["words"] = [w for seg in transcript.get("segments", []) for w in seg.get("words", [])]
 
     # Enforce campaign clip length constraints
-    min_length = 15  # default
-    max_length = 120  # default
+    min_length = 15
+    max_length = 120
     if campaign:
         min_length = campaign.get("min_clip_length", 15)
         max_length = campaign.get("max_clip_length", 120)
 
-    original_moments = moments
-    filtered_moments = []
+    original_moments  = moments
+    filtered_moments  = []
     for m in moments:
         dur = m["end_seconds"] - m["start_seconds"]
         if min_length <= dur <= max_length:
@@ -230,14 +239,16 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
         raw_clip_path   = str(clips_dir / f"raw_{idx}.mp4")
         final_clip_path = str(clips_dir / f"clip_{idx}.mp4")
 
-        # Step 1: Cut raw clip
-        (
-            ffmpeg
-            .input(video_path, ss=start, t=duration)
-            .output(raw_clip_path, c="copy")
-            .overwrite_output()
-            .run(quiet=False, cmd=FFMPEG_BIN)
-        )
+        # Step 1: Cut raw clip — explicit -map to exclude data/timecode streams
+        _run([
+            FFMPEG_BIN, "-y",
+            "-ss", str(start), "-t", str(duration),
+            "-i", video_path,
+            "-map", "0:v:0", "-map", "0:a:0",
+            "-c", "copy",
+            "-map_metadata", "-1",
+            raw_clip_path,
+        ])
 
         if layout_style == 'boxed':
             # Step 2+3: Boxed layout — square + padded canvas + drawtext captions
@@ -278,19 +289,18 @@ def render_clips(video_path: str, moments: list[dict], job_id: str, campaign: di
             full_vf = f"{crop_filter},scale=1080:1920,subtitles='{ass_path_escaped}'"
             print(f"[DEBUG] vf filter for clip {idx}: {full_vf[:120]}{'...' if len(full_vf) > 120 else ''}")
 
-            (
-                ffmpeg
-                .input(raw_clip_path)
-                .output(
-                    final_clip_path,
-                    vf=full_vf,
-                    vcodec="h264_nvenc",
-                    acodec="aac",
-                    **{"rc:v": "vbr", "cq:v": "26", "preset": "p4", "maxrate:v": "2500k", "bufsize:v": "5000k"}
-                )
-                .overwrite_output()
-                .run(quiet=False, cmd=FFMPEG_BIN)
-            )
+            # Full-bleed re-encode — explicit -map before output filename
+            _run([
+                FFMPEG_BIN, "-y",
+                "-i", raw_clip_path,
+                "-map", "0:v:0", "-map", "0:a:0",
+                "-vf", full_vf,
+                "-vcodec", "h264_nvenc", "-acodec", "aac",
+                "-map_metadata", "-1",
+                "-rc:v", "vbr", "-cq:v", "26", "-preset", "p4",
+                "-maxrate:v", "2500k", "-bufsize:v", "5000k",
+                final_clip_path,
+            ])
 
         # Step 4: Move clip to permanent local storage
         file_size_mb = os.path.getsize(final_clip_path) / (1024 * 1024)

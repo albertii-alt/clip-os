@@ -101,7 +101,7 @@ def analyze(segments: list[dict], campaign: dict | None) -> list[dict]:
     # Call Gemini Flash
     client = genai.Client(api_key=settings.gemini_api_key)
     response = client.models.generate_content(
-        model="gemini-3.1-flash-lite",
+        model="gemini-3.5-flash",
         contents=prompt
     )
 

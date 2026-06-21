@@ -1,13 +1,28 @@
 """
 Face tracking service — dynamic horizontal crop positioning via MediaPipe.
-Uses the legacy mp.solutions.face_detection API which has no telemetry/network calls.
+Uses mediapipe.tasks.python.vision.FaceDetector (Tasks API).
 """
 
 import os
-os.environ["GLOG_minloglevel"] = "2"
+import urllib.request
+from pathlib import Path
 
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mp_vision
+
+os.environ["GLOG_minloglevel"] = "3"
+
+MODEL_PATH = Path(__file__).parent.parent / "benchmarks" / "blaze_face_short_range.tflite"
+MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+
+
+def _ensure_model() -> None:
+    if not MODEL_PATH.exists():
+        print(f"[INFO] Downloading face detection model to {MODEL_PATH} ...")
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        print("[INFO] Model download complete.")
 
 
 def detect_face_positions(
@@ -21,6 +36,12 @@ def detect_face_positions(
     Returns list of (timestamp_relative_to_start, normalized_x | None).
     normalized_x is face center x as fraction of frame width (0.0–1.0).
     """
+    _ensure_model()
+
+    base_options     = mp_python.BaseOptions(model_asset_path=str(MODEL_PATH))
+    detector_options = mp_vision.FaceDetectorOptions(base_options=base_options)
+    detector         = mp_vision.FaceDetector.create_from_options(detector_options)
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         return []
@@ -33,22 +54,22 @@ def detect_face_positions(
     results: list[tuple[float, float | None]] = []
     frame_idx = start_frame
 
-    with mp.solutions.face_detection.FaceDetection(
-        model_selection=0, min_detection_confidence=0.5
-    ) as detector:
+    with detector:
         while frame_idx <= end_frame:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if not ret:
                 break
 
+            w          = frame.shape[1]
             rgb        = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            det_result = detector.process(rgb)
+            mp_image   = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            det_result = detector.detect(mp_image)
             timestamp  = (frame_idx - start_frame) / video_fps
 
             if det_result.detections:
-                bbox   = det_result.detections[0].location_data.relative_bounding_box
-                norm_x = bbox.xmin + bbox.width / 2
+                bbox   = det_result.detections[0].bounding_box
+                norm_x = (bbox.origin_x + bbox.width / 2) / w
                 results.append((timestamp, max(0.0, min(1.0, norm_x))))
             else:
                 results.append((timestamp, None))
@@ -69,7 +90,6 @@ def fill_gaps_and_smooth(
     if not positions:
         return []
 
-    # Forward-fill
     last_known = 0.5
     filled: list[tuple[float, float]] = []
     for ts, x in positions:
@@ -77,13 +97,12 @@ def fill_gaps_and_smooth(
             last_known = x
         filled.append((ts, last_known))
 
-    # Moving average (window=7 @ 2fps = 3.5s of smoothing)
     window = 7
     xs = [x for _, x in filled]
     smoothed: list[tuple[float, float]] = []
     for i, (ts, _) in enumerate(filled):
-        lo = max(0, i - window // 2)
-        hi = min(len(xs), lo + window)
+        lo  = max(0, i - window // 2)
+        hi  = min(len(xs), lo + window)
         avg = sum(xs[lo:hi]) / (hi - lo)
         smoothed.append((ts, avg))
 
@@ -115,9 +134,6 @@ def build_dynamic_crop_filter(
     if not positions:
         return f"crop={target_width}:{target_height}:{max_x // 2}:0"
 
-    # Deduplicate consecutive identical pixel values — a 60s clip at 2fps
-    # produces 120 keyframes; if the face barely moves they all map to the same
-    # pixel, collapsing to a single static crop and avoiding deep nesting.
     deduped: list[tuple[float, float]] = [positions[0]]
     for ts, nx in positions[1:]:
         if norm_to_px(nx) != norm_to_px(deduped[-1][1]):
@@ -127,16 +143,10 @@ def build_dynamic_crop_filter(
     if len(positions) == 1:
         return f"crop={target_width}:{target_height}:{norm_to_px(positions[0][1])}:0"
 
-    # Cap at 48 unique keyframes so the nested if/between expression stays well
-    # under FFmpeg's evaluator recursion limit.
     if len(positions) > 48:
         step = len(positions) / 48
         positions = [positions[int(i * step)] for i in range(48)] + [positions[-1]]
 
-    # Build a linearly-interpolating expression between consecutive keyframes.
-    # Uses gte(t,t0)*lte(t,t1) instead of between(t,t0,t1) to avoid commas
-    # inside the expression — ffmpeg-python's vf= quoting does not reliably
-    # preserve \, escapes, causing bare floats to appear as filter tokens.
     def make_lerp(px0: int, px1: int, t0: float, t1: float) -> str:
         dt = t1 - t0
         if dt <= 0 or px0 == px1:
@@ -144,13 +154,11 @@ def build_dynamic_crop_filter(
         return f"({px0}+({px1}-{px0})*(t-{t0:.4f})/{dt:.4f})"
 
     def make_cond(t0: float, t1: float) -> str:
-        # gte(t,t0)*lte(t,t1) == 1 only when t0 <= t <= t1, no commas needed
         return f"gte(t\\,{t0:.4f})*lte(t\\,{t1:.4f})"
 
     px_values = [norm_to_px(nx) for _, nx in positions]
     px_final  = px_values[-1]
 
-    # Start from the last segment as the fallback and wrap inward.
     expr = str(px_final)
     for i in reversed(range(len(positions) - 1)):
         t0  = positions[i][0]
@@ -161,7 +169,6 @@ def build_dynamic_crop_filter(
             continue
         lerp = make_lerp(px0, px1, t0, t1)
         cond = make_cond(t0, t1)
-        # if(cond, lerp, fallback) — commas here are inside if() so must be \,
         expr = f"if({cond}\\,{lerp}\\,{expr})"
 
     return f"crop={target_width}:{target_height}:{expr}:0"

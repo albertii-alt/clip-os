@@ -152,10 +152,10 @@ def _build_raw_chunks(
     for chunk in [clip_words[i:i + chunk_size] for i in range(0, len(clip_words), chunk_size)]:
         if not chunk:
             continue
-        start = max(0.0, chunk[0]["start"] - clip_start - EARLY_DISPLAY_MS)
-        end   = chunk[-1]["end"] - clip_start + 0.3
-        end   = max(start + MIN_DISPLAY_SEC, end)
-        end   = min(end, clip_end - clip_start)
+        start         = max(0.0, chunk[0]["start"] - clip_start - EARLY_DISPLAY_MS)
+        last_word_end = chunk[-1]["end"] - clip_start
+        # Cap at last_word_end + 0.3 — never stretch into post-speech silence.
+        end           = max(start + MIN_DISPLAY_SEC, last_word_end + 0.3)
         raw.append((chunk, start, end))
 
     # Trim each chunk's end so it doesn't overlap the next chunk's start
@@ -218,7 +218,7 @@ def generate_ass_subtitles(
     # \k tags are in centiseconds and control how long each word is "active" (highlighted).
     # Alignment 8 = top-center, so \pos y counts from the top — easier to reason about.
     # 860px from top on a 1920px canvas = ~45% down, just above center.
-    CAPTION_Y = 920
+    CAPTION_Y = 950
 
     ass_header = """[Script Info]
 ScriptType: v4.00+

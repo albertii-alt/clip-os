@@ -11,7 +11,7 @@ def detect_face_positions(
     video_path: str,
     start: float,
     end: float,
-    sample_fps: float = 2.0,
+    sample_fps: float = 1.0,
 ) -> list[tuple[float, float | None]]:
     """
     Sample frames from [start, end] at sample_fps and detect the face horizontal center.
@@ -65,14 +65,20 @@ def detect_face_positions(
 
 def fill_gaps_and_smooth(
     positions: list[tuple[float, float | None]],
+    max_px_delta: int = 80,
+    orig_width: int = 1920,
+    target_width: int = 1080,
 ) -> list[tuple[float, float]]:
     """
-    Forward-fill None gaps, then apply a 7-sample moving average.
-    If the list starts with None, uses 0.5 (center) as initial fallback.
+    Forward-fill None gaps, apply a 15-sample moving average, then clamp
+    the maximum pixel jump between consecutive keyframes to max_px_delta.
+    Larger window and delta clamp prevent jittery Haar cascade detections
+    from causing visible panning in the output.
     """
     if not positions:
         return []
 
+    # Forward-fill None values
     last_known = 0.5
     filled: list[tuple[float, float]] = []
     for ts, x in positions:
@@ -80,7 +86,8 @@ def fill_gaps_and_smooth(
             last_known = x
         filled.append((ts, last_known))
 
-    window = 7
+    # Larger window = more temporal smoothing (15 samples @ 1fps = 15s)
+    window = 15
     xs = [x for _, x in filled]
     smoothed: list[tuple[float, float]] = []
     for i, (ts, _) in enumerate(filled):
@@ -89,7 +96,21 @@ def fill_gaps_and_smooth(
         avg = sum(xs[lo:hi]) / (hi - lo)
         smoothed.append((ts, avg))
 
-    return smoothed
+    # Clamp max pixel jump between consecutive samples to suppress rapid pans.
+    # Convert norm_x delta to pixels, clamp, convert back.
+    max_x     = max(1, orig_width - target_width)
+    max_delta = max_px_delta / orig_width  # normalised delta threshold
+
+    clamped: list[tuple[float, float]] = [smoothed[0]]
+    for i in range(1, len(smoothed)):
+        ts, nx   = smoothed[i]
+        prev_nx  = clamped[-1][1]
+        delta    = nx - prev_nx
+        if abs(delta) > max_delta:
+            nx = prev_nx + max_delta * (1 if delta > 0 else -1)
+        clamped.append((ts, max(0.0, min(1.0, nx))))
+
+    return clamped
 
 
 def build_dynamic_crop_filter(

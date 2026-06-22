@@ -155,15 +155,21 @@ def compute_caption_chunks(
             raw_start = chunk[0]["start"] - clip_start - EARLY_DISPLAY_MS
             start     = max(0.0, raw_start)
 
-            if idx + 1 < len(chunks):
-                next_start = chunks[idx + 1][0]["start"] - clip_start - EARLY_DISPLAY_MS
-                end = max(start + MIN_DISPLAY_SEC, next_start)
-            else:
-                end = chunk[-1]["end"] - clip_start + 0.3
-
+            # End 0.3s after the last word in this chunk finishes.
+            # This clears the caption during silences and pauses between sentences,
+            # rather than holding it on screen until the next chunk begins.
+            end = chunk[-1]["end"] - clip_start + 0.3
+            end = max(start + MIN_DISPLAY_SEC, end)
             end = min(end, clip_end - clip_start)
             text = " ".join(w["word"].upper() for w in chunk)
             result.append((text, start, end))
+
+        # Trim each chunk's end so it doesn't overlap the next chunk's start
+        for i in range(len(result) - 1):
+            text, s, e = result[i]
+            next_s = result[i + 1][1]
+            if e > next_s:
+                result[i] = (text, s, next_s - 0.01)
 
     elif segments:
         clip_segments = [s for s in segments if s["start"] >= clip_start and s["end"] <= clip_end]

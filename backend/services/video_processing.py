@@ -111,7 +111,7 @@ def _get_crop_filter(
     _ft_start = time.perf_counter()
     try:
         raw_positions = detect_face_positions(raw_clip_path, 0.0, clip_duration)
-        smoothed      = fill_gaps_and_smooth(raw_positions)
+        smoothed      = fill_gaps_and_smooth(raw_positions, orig_width=orig_width, target_width=target_w)
         if not smoothed:
             raise ValueError("no usable positions")
         crop_filter = build_dynamic_crop_filter(

@@ -25,7 +25,7 @@ This directive overrides general selection criteria. Only select moments that ma
 - Curiosity gap: Does it make someone want to know more?
 - Novelty: Is this surprising or counter-intuitive?
 - Completeness: Can it stand alone without context?
-- Short title quality: Can the moment be summarised in a punchy, curiosity-driven title under 8 words? Think bold declarative statements that create intrigue (e.g. "The Mistake That Cost Him Everything" or "Nobody Talks About This Anymore"). Do NOT write in all caps.
+- Hook caption quality: Write a comment-style hook caption (15-25 words) that teases the moment the way an engaging social media comment or caption would. It should build curiosity or emotional investment without giving away the full outcome. Think the style of: "She thought she'd never see her family again, but what happened next changed everything." or "He had one shot to fix this mistake, and what he did next surprised everyone." Write in normal sentence case, not all caps (the renderer handles uppercase styling separately). End the caption with exactly one relevant emoji that matches the tone of the moment (e.g. 😱 for shocking, 😢 for emotional, 🤯 for mind-blowing, 😂 for funny).
 
 ## Output Format
 Return ONLY a valid JSON array. No explanation. No markdown. No extra text.
@@ -35,7 +35,7 @@ Return ONLY a valid JSON array. No explanation. No markdown. No extra text.
     "start": "MM:SS",
     "end": "MM:SS",
     "hook": "Rewritten opening line optimized for retention",
-    "short_title": "Punchy title under 8 words for text overlay",
+    "short_title": "Comment-style hook caption, 15-25 words, building curiosity, ending with one emoji",
     "category": "emotional_story | controversy | educational | funny | curiosity_gap",
     "score": 85,
     "reason": "One sentence explaining why this moment works"
@@ -115,7 +115,9 @@ def analyze(segments: list[dict], campaign: dict | None) -> list[dict]:
         match = re.search(r'\[.*\]', clean, re.DOTALL)
         if not match:
             raise ValueError("No JSON array found in Gemini response")
-        moments = json.loads(match.group())
+        # Strip trailing commas before } or ] — Gemini sometimes outputs JS-style JSON
+        json_str = re.sub(r',\s*([}\]])', r'\1', match.group())
+        moments = json.loads(json_str)
     except Exception as e:
         raise ValueError(f"Failed to parse Gemini response: {e}\nRaw: {raw}")
 

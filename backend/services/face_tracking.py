@@ -1,28 +1,10 @@
 """
-Face tracking service — dynamic horizontal crop positioning via MediaPipe.
-Uses mediapipe.tasks.python.vision.FaceDetector (Tasks API).
+Face tracking service — dynamic horizontal crop positioning.
+Uses OpenCV's built-in Haar cascade detector (haarcascade_frontalface_default.xml).
+No MediaPipe, no telemetry, no network calls, no external model downloads.
 """
 
-import os
-import urllib.request
-from pathlib import Path
-
 import cv2
-import mediapipe as mp
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision as mp_vision
-
-os.environ["GLOG_minloglevel"] = "3"
-
-MODEL_PATH = Path(__file__).parent.parent / "benchmarks" / "blaze_face_short_range.tflite"
-MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-
-
-def _ensure_model() -> None:
-    if not MODEL_PATH.exists():
-        print(f"[INFO] Downloading face detection model to {MODEL_PATH} ...")
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-        print("[INFO] Model download complete.")
 
 
 def detect_face_positions(
@@ -36,11 +18,9 @@ def detect_face_positions(
     Returns list of (timestamp_relative_to_start, normalized_x | None).
     normalized_x is face center x as fraction of frame width (0.0–1.0).
     """
-    _ensure_model()
-
-    base_options     = mp_python.BaseOptions(model_asset_path=str(MODEL_PATH))
-    detector_options = mp_vision.FaceDetectorOptions(base_options=base_options)
-    detector         = mp_vision.FaceDetector.create_from_options(detector_options)
+    detector = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -52,29 +32,32 @@ def detect_face_positions(
     end_frame   = int(end   * video_fps)
 
     results: list[tuple[float, float | None]] = []
+
+    # Seek once to start_frame, then read sequentially — much faster than
+    # repeated random seeks in compressed MP4 which force keyframe decoding.
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     frame_idx = start_frame
 
-    with detector:
-        while frame_idx <= end_frame:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if not ret:
-                break
+    while frame_idx <= end_frame:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-            w          = frame.shape[1]
-            rgb        = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image   = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            det_result = detector.detect(mp_image)
-            timestamp  = (frame_idx - start_frame) / video_fps
+        # Only process frames at the desired sample interval
+        if (frame_idx - start_frame) % frame_skip == 0:
+            w         = frame.shape[1]
+            gray      = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces     = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+            timestamp = (frame_idx - start_frame) / video_fps
 
-            if det_result.detections:
-                bbox   = det_result.detections[0].bounding_box
-                norm_x = (bbox.origin_x + bbox.width / 2) / w
+            if len(faces) > 0:
+                x, y, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+                norm_x = (x + fw / 2) / w
                 results.append((timestamp, max(0.0, min(1.0, norm_x))))
             else:
                 results.append((timestamp, None))
 
-            frame_idx += frame_skip
+        frame_idx += 1
 
     cap.release()
     return results

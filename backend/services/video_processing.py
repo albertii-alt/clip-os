@@ -30,6 +30,63 @@ FONT_PATHS = {
 os.environ.setdefault("FC_CONFIG_FILE", "")
 os.environ.setdefault("FONTCONFIG_FILE", "")
 
+# Max characters per title line at fontsize 34-48 on 1080px canvas.
+# Increased to accommodate longer comment-style captions
+TITLE_MAX_CHARS = 30
+
+
+def wrap_title_text(text: str, max_chars_per_line: int = TITLE_MAX_CHARS, max_lines: int = 5) -> list[str]:
+    """
+    Wrap title text into at most max_lines lines, breaking at word boundaries.
+    Handles emoji characters properly and preserves them.
+    Truncates the last line with ellipsis if text still overflows after wrapping.
+    """
+    # If text is empty, return empty list
+    if not text:
+        return []
+        
+    words = text.split()
+    lines: list[str] = []
+    current_line: list[str] = []
+    current_len = 0
+
+    for word in words:
+        word_len = len(word) + (1 if current_line else 0)
+        if current_len + word_len > max_chars_per_line and current_line:
+            lines.append(" ".join(current_line))
+            current_line = [word]
+            current_len = len(word)
+            if len(lines) == max_lines:
+                break
+        else:
+            current_line.append(word)
+            current_len += word_len
+
+    if current_line and len(lines) < max_lines:
+        lines.append(" ".join(current_line))
+
+    # If we have more than max_lines, truncate the last line
+    total_words = sum(len(l.split()) for l in lines)
+    if total_words < len(words) and lines:
+        last = lines[-1]
+        # Try to truncate at word boundary
+        last_words = last.split()
+        truncated = ""
+        for w in last_words:
+            if len(truncated) + len(w) + 1 <= max_chars_per_line - 4:
+                if truncated:
+                    truncated += " " + w
+                else:
+                    truncated = w
+            else:
+                break
+        if truncated:
+            lines[-1] = truncated + "..."
+        else:
+            lines[-1] = last[:max_chars_per_line - 4].rstrip() + "..."
+
+    return lines
+
 
 def _run(cmd: list[str]) -> None:
     """Run an FFmpeg command via subprocess with readable error output on failure."""
@@ -148,16 +205,38 @@ def render_boxed_clip(
             f":enable='gte(t,{t_start:.3f})*lte(t,{t_end:.3f})'"
         )
 
-    # ── Short title drawtext (tight above square) ─────────────────────────────
-    TITLE_GAP     = 25  # px between title box bottom and square top
-    title_y       = max(20, SQUARE_Y - TITLE_GAP - 70)
-    title_escaped = esc(short_title.upper())
-    title_filter  = (
-        f",drawtext=text='{title_escaped}'"
-        f":fontfile='{esc_path(title_font)}':fontsize=48:fontcolor=black:fix_bounds=1:text_shaping=0"
-        f":x=(w-text_w)/2:y={title_y}"
-        f":box=1:boxcolor=white@0.92:boxborderw=16"
-    )
+    # ── Multi-line title drawtext (tight above square) ────────────────────────
+    TITLE_GAP   = 25   # px between last title line's box bottom and square top
+    title_lines = wrap_title_text(short_title)
+    n_lines     = len(title_lines)
+
+    # Dynamic font sizing based on number of lines and text length
+    # For long comment-style captions, use smaller font
+    if n_lines <= 2:
+        fontsize = 48
+        line_height = 56
+    elif n_lines == 3:
+        fontsize = 40
+        line_height = 48
+    else:  # 4+ lines
+        fontsize = 34
+        line_height = 42
+    
+    # Calculate total text height and starting Y position
+    total_text_height = n_lines * line_height
+    first_line_y = SQUARE_Y - TITLE_GAP - total_text_height
+    first_line_y = max(20, first_line_y)  # Don't go above top of canvas
+
+    title_filter = ""
+    for li, line_text in enumerate(title_lines):
+        line_y = first_line_y + (li * line_height)
+        # Add a subtle box shadow or background for readability
+        title_filter += (
+            f",drawtext=text='{esc(line_text)}'"
+            f":fontfile='{esc_path(title_font)}':fontsize={fontsize}:fontcolor=black:fix_bounds=1:text_shaping=0"
+            f":x=(w-text_w)/2:y={line_y}"
+            f":box=1:boxcolor=white@0.92:boxborderw={12 if fontsize < 40 else 16}"
+        )
 
     # ── Full filter chain ─────────────────────────────────────────────────────
     full_vf = (

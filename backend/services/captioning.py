@@ -129,6 +129,45 @@ def recover_orphan_words(segments: list[dict]) -> list[dict]:
     return segments
 
 
+def _build_raw_chunks(
+    words: list[dict],
+    clip_start: float,
+    clip_end: float,
+) -> list[tuple[list[dict], float, float]]:
+    """
+    Core chunking logic. Returns list of (chunk_words, start_sec, end_sec)
+    where chunk_words is the raw list of word dicts with their original timestamps.
+    Overlap trimming is applied so no two chunks overlap.
+    """
+    EARLY_DISPLAY_MS = 0.05
+    MIN_DISPLAY_SEC  = 0.3
+
+    clip_words = [w for w in words if w["start"] >= clip_start and w["end"] <= clip_end]
+    if not clip_words:
+        return []
+
+    chunk_size = 3
+    raw: list[tuple[list[dict], float, float]] = []
+
+    for chunk in [clip_words[i:i + chunk_size] for i in range(0, len(clip_words), chunk_size)]:
+        if not chunk:
+            continue
+        start = max(0.0, chunk[0]["start"] - clip_start - EARLY_DISPLAY_MS)
+        end   = chunk[-1]["end"] - clip_start + 0.3
+        end   = max(start + MIN_DISPLAY_SEC, end)
+        end   = min(end, clip_end - clip_start)
+        raw.append((chunk, start, end))
+
+    # Trim each chunk's end so it doesn't overlap the next chunk's start
+    for i in range(len(raw) - 1):
+        chunk_words, s, e = raw[i]
+        next_s = raw[i + 1][1]
+        if e > next_s:
+            raw[i] = (chunk_words, s, next_s - 0.01)
+
+    return raw
+
+
 def compute_caption_chunks(
     words: list[dict],
     clip_start: float,
@@ -139,37 +178,13 @@ def compute_caption_chunks(
     Returns a list of (text, start_sec, end_sec) tuples in clip-relative time.
     Shared by both the ASS writer and the drawtext generator.
     """
-    EARLY_DISPLAY_MS = 0.05
-    MIN_DISPLAY_SEC  = 0.3
     result: list[tuple[str, float, float]] = []
 
-    clip_words = [w for w in words if w["start"] >= clip_start and w["end"] <= clip_end]
-
-    if clip_words:
-        chunk_size = 3
-        chunks = [clip_words[i:i + chunk_size] for i in range(0, len(clip_words), chunk_size)]
-
-        for idx, chunk in enumerate(chunks):
-            if not chunk:
-                continue
-            raw_start = chunk[0]["start"] - clip_start - EARLY_DISPLAY_MS
-            start     = max(0.0, raw_start)
-
-            # End 0.3s after the last word in this chunk finishes.
-            # This clears the caption during silences and pauses between sentences,
-            # rather than holding it on screen until the next chunk begins.
-            end = chunk[-1]["end"] - clip_start + 0.3
-            end = max(start + MIN_DISPLAY_SEC, end)
-            end = min(end, clip_end - clip_start)
-            text = " ".join(w["word"].upper() for w in chunk)
+    raw_chunks = _build_raw_chunks(words, clip_start, clip_end)
+    if raw_chunks:
+        for chunk_words, start, end in raw_chunks:
+            text = " ".join(w["word"].upper() for w in chunk_words)
             result.append((text, start, end))
-
-        # Trim each chunk's end so it doesn't overlap the next chunk's start
-        for i in range(len(result) - 1):
-            text, s, e = result[i]
-            next_s = result[i + 1][1]
-            if e > next_s:
-                result[i] = (text, s, next_s - 0.01)
 
     elif segments:
         clip_segments = [s for s in segments if s["start"] >= clip_start and s["end"] <= clip_end]
@@ -195,11 +210,16 @@ def generate_ass_subtitles(
     segments: list[dict] = None
 ):
     """
-    Generates TikTok-style ASS subtitle file for a clip.
-    - Position: lower center (70% down)
-    - Max 3 words per line
-    - Short punchy display
+    Generates TikTok-style ASS subtitle file for a clip with karaoke word highlighting.
+    Each spoken word turns yellow as it is said; the rest of the chunk stays white.
+    Falls back to plain segment-level lines when no word timestamps are available.
     """
+    # Two styles: Default (white, for unspoken words) and Highlight (yellow, for the active word).
+    # \k tags are in centiseconds and control how long each word is "active" (highlighted).
+    # Alignment 8 = top-center, so \pos y counts from the top — easier to reason about.
+    # 860px from top on a 1920px canvas = ~45% down, just above center.
+    CAPTION_Y = 920
+
     ass_header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -208,16 +228,42 @@ WrapStyle: 1
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,4,2,2,60,60,300,1
+Style: Default,Arial Black,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,4,2,8,60,60,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-    chunks = compute_caption_chunks(words, clip_start, clip_end, segments)
-    lines  = [
-        f"Dialogue: 0,{seconds_to_ass_time(s)},{seconds_to_ass_time(e)},Default,,0,0,0,,{t}"
-        for t, s, e in chunks
-    ]
+
+    raw_chunks = _build_raw_chunks(words, clip_start, clip_end)
+    lines: list[str] = []
+
+    if raw_chunks:
+        for chunk_words, start, end in raw_chunks:
+            t_start = seconds_to_ass_time(start)
+            t_end   = seconds_to_ass_time(end)
+
+            # \k<cs> = hard karaoke (instant colour switch, no fill sweep)
+            # \1c sets the primary colour: yellow for the active word, white to reset.
+            # ASS colour format is &HBBGGRR& (blue-green-red).
+            # Yellow = &H00FFFF& (R=FF, G=FF, B=00), White = &HFFFFFF&
+            parts: list[str] = []
+            for w in chunk_words:
+                duration_cs = max(1, round((w["end"] - w["start"]) * 100))
+                label       = w["word"].upper()
+                parts.append(f"{{\\k{duration_cs}}}{{\\1c&H00FFFF&}}{label}{{\\1c&HFFFFFF&}}")
+
+            karaoke_text = f"{{\\pos(540,{CAPTION_Y})}}" + " ".join(parts)
+            lines.append(
+                f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{karaoke_text}"
+            )
+
+    elif segments:
+        # Fallback: no word timestamps — plain segment lines, no highlighting
+        plain_chunks = compute_caption_chunks([], clip_start, clip_end, segments)
+        for t, s, e in plain_chunks:
+            lines.append(
+                f"Dialogue: 0,{seconds_to_ass_time(s)},{seconds_to_ass_time(e)},Default,,0,0,0,,{t}"
+            )
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(ass_header)
